@@ -6,7 +6,11 @@ import {
   previousLocalDate,
   toLocalDateString,
 } from "@/lib/dates";
-import type { AppSettings, StreakState } from "@/lib/types";
+import {
+  FOCUS_DURATION_PRESETS,
+  type AppSettings,
+  type StreakState,
+} from "@/lib/types";
 
 interface SettingsPanelProps {
   open: boolean;
@@ -74,6 +78,40 @@ export function SettingsPanel({
           <legend className="mb-2 text-sm font-semibold text-zinc-800 dark:text-zinc-200">
             Durations (minutes)
           </legend>
+
+          <div>
+            <p className="mb-2 text-xs text-zinc-500 dark:text-zinc-400">
+              Focus soft presets
+            </p>
+            <div className="mb-3 flex flex-wrap gap-2">
+              {FOCUS_DURATION_PRESETS.map((mins) => {
+                const active = settings.durations.focusMinutes === mins;
+                return (
+                  <button
+                    key={mins}
+                    type="button"
+                    onClick={() =>
+                      onUpdateSettings({
+                        durations: {
+                          ...settings.durations,
+                          focusMinutes: mins,
+                        },
+                      })
+                    }
+                    aria-pressed={active}
+                    className={`rounded-full px-3.5 py-1.5 text-sm font-semibold tabular-nums transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500 ${
+                      active
+                        ? "bg-rose-500 text-white"
+                        : "border border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
+                    }`}
+                  >
+                    {mins}m
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           <NumberField
             id="focus-min"
             label="Focus"
@@ -121,6 +159,14 @@ export function SettingsPanel({
             label="End sound"
             checked={settings.soundEnabled}
             onChange={(checked) => onUpdateSettings({ soundEnabled: checked })}
+          />
+          <Toggle
+            id="pre-end"
+            label="Pre-end cue (last 10s of Focus)"
+            checked={settings.preEndCueEnabled}
+            onChange={(checked) =>
+              onUpdateSettings({ preEndCueEnabled: checked })
+            }
           />
           <Toggle
             id="notif"
