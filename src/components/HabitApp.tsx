@@ -44,6 +44,8 @@ export function HabitApp() {
   }, []);
 
   // PL19: document.title with remaining time while timer active (no PWA)
+  // Only restore DEFAULT_TITLE when becoming inactive or on unmount — never in
+  // the effect cleanup on each secondsLeft tick (avoids tab-title flicker).
   useEffect(() => {
     if (!store.hydrated) return;
     const active = store.status === "running" || store.status === "paused";
@@ -64,9 +66,6 @@ export function HabitApp() {
       suffix = modeLabel(store.mode);
     }
     document.title = `${time} · ${suffix}`;
-    return () => {
-      document.title = DEFAULT_TITLE;
-    };
   }, [
     store.hydrated,
     store.status,
@@ -74,6 +73,12 @@ export function HabitApp() {
     store.mode,
     store.activeTodo,
   ]);
+
+  useEffect(() => {
+    return () => {
+      document.title = DEFAULT_TITLE;
+    };
+  }, []);
 
   if (!store.hydrated) {
     return <HydrationSkeleton />;
