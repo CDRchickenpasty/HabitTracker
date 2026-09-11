@@ -39,27 +39,29 @@ npx vercel
 ## Product loop (v1)
 
 1. Add todos (list is not day-scoped in v1 — it persists until you clear items).
-2. Select one task as the current focus (shown on the timer).
+2. Select one task as the current focus (shown under the timer for the whole Focus).
 3. Run a **Focus** Pomodoro.
-4. On **completed** Focus → auto-advance to a break; credit streak / today stats.
+4. On **completed** Focus (natural 00:00) → “Focus credited” beat; auto-advance to a break; credit streak / today stats.
 5. Completing Focus does **not** auto-complete the linked todo.
+6. Skip / Reset during an in-progress Focus asks for confirm — **zero credit**.
 
-**UX:** Timer is primary while a session is running/paused; the todo list is primary otherwise.
+**UX:** While Focus is running/paused, chrome is minimal (digits + task name + controls + today/streak). Fuller chrome returns on breaks / idle. Timer is primary while a session is running/paused; the todo list is primary otherwise.
 
 ## Timer
 
 | Mode        | Default | Notes                                      |
 |-------------|---------|--------------------------------------------|
-| Focus       | 25 min  | Customizable in Settings                   |
+| Focus       | 25 min  | Soft presets 15 / 25 / 45 / 50 in Settings |
 | Short break | 5 min   | After a completed Focus (until 4th)        |
 | Long break  | 15 min  | After **4 completed** Focus sessions       |
 
 Controls: **Start**, **Pause**, **Resume**, **Reset**, **Skip**.
 
-- After each **completed** Focus → auto-advance to break.
+- After each **completed** Focus → auto-advance to break + credit beat.
 - After 4 completed Focus sessions → next break is **Long break**; counter resets.
-- **Skip does not** increment the focus-toward-long-break counter (and skipped/incomplete Focus never credits streaks).
-- Optional end sound (Web Audio beep) and permission-gated browser Notification.
+- **Skip / Reset do not** credit Focus (abandon confirm when Focus is in progress). Skip also does not increment the focus-toward-long-break counter.
+- Optional **end sound** (muted when End sound is off) and permission-gated browser Notification.
+- Optional **pre-end cue** (Settings): once in the last 10s of a Focus — soft sound (if End sound on) + toast. Not fired on skip/reset.
 - **Live timer persists** across refresh: mode / status / remaining time are saved. If a session was **running**, remaining time is recomputed from wall clock (`endsAt`); if it hit 0 while away, the same completion path runs (advance mode, credit Focus if applicable).
 
 ## Todos
@@ -67,7 +69,8 @@ Controls: **Start**, **Pause**, **Resume**, **Reset**, **Skip**.
 - Add, edit/rename, complete/uncomplete, delete
 - Select one as current focus (persisted with the list in `localStorage`)
 - Focus completion does **not** check off the todo
-- UI label is **Todos** (not day-filtered in v1)
+- Empty state teaches the loop: only completed Focus counts toward the streak
+- List chrome shows **Today · N Focus** and **Streak · N days**
 
 ## Habit streaks
 
@@ -77,17 +80,17 @@ Documented rules (also summarized in Settings):
 2. **Day** = device local date, stored as `YYYY-MM-DD` (not UTC).
 3. **Incomplete / paused / skipped** Focus sessions never count.
 4. **Breaks** never count.
-5. Current + best streak are shown on the Today strip and in Settings.
+5. Current + best streak are shown on the Today strip, list header, and in Settings.
 
-Out of scope for v1: day-start offset, off-days, freeze/repair, estimates, export, sync, accounts, gamification.
+Out of scope for v1: day-start offset, off-days, freeze/repair, estimates, export, sync, accounts, gamification / RPG / social.
 
 ## Today strip
 
 Shows:
 
-- Focus sessions completed today
+- Focus sessions completed today (`Today · N Focus`)
 - Focus minutes completed today
-- Current streak (with best streak as hint)
+- Current streak (`Streak · N days`, with best as hint)
 
 ## QA / Testing hooks
 

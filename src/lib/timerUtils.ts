@@ -67,6 +67,31 @@ export function nextModeAfterCompletion(
   return { mode: "focus", focusTowardLongBreak };
 }
 
+/** Soft pre-end cue (quieter / lower than end sound). */
+export function playPreEndCue(): void {
+  try {
+    const Ctx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext })
+        .webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = 660;
+    gain.gain.value = 0.05;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.25);
+    osc.stop(ctx.currentTime + 0.3);
+    setTimeout(() => void ctx.close(), 400);
+  } catch {
+    // ignore
+  }
+}
+
 /** Play a short beep via Web Audio API (no asset required). */
 export function playEndSound(): void {
   try {

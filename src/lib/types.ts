@@ -26,6 +26,8 @@ export interface AppSettings {
   durations: DurationSettings;
   soundEnabled: boolean;
   notificationsEnabled: boolean;
+  /** Optional soft cue ~last 10s of a Focus (once per session) */
+  preEndCueEnabled: boolean;
   /** Show Testing section in settings */
   showTestingHooks: boolean;
   testOverrides: TestDurationOverrides;
@@ -73,6 +75,8 @@ export interface PersistedState {
   timer: LiveTimerState;
 }
 
+export const FOCUS_DURATION_PRESETS = [15, 25, 45, 50] as const;
+
 export const DEFAULT_SETTINGS: AppSettings = {
   durations: {
     focusMinutes: 25,
@@ -81,6 +85,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   soundEnabled: true,
   notificationsEnabled: false,
+  preEndCueEnabled: false,
   showTestingHooks: false,
   testOverrides: {
     focusSeconds: null,

@@ -11,6 +11,7 @@ interface TimerProps {
   activeTodo: Todo | null;
   focusTowardLongBreak: number;
   isPrimary: boolean;
+  minimal?: boolean;
   onStart: () => void;
   onPause: () => void;
   onResume: () => void;
@@ -38,6 +39,7 @@ export function Timer({
   activeTodo,
   focusTowardLongBreak,
   isPrimary,
+  minimal = false,
   onStart,
   onPause,
   onResume,
@@ -50,6 +52,15 @@ export function Timer({
   const c = 2 * Math.PI * r;
   const offset = c * (1 - Math.min(1, Math.max(0, progress)));
 
+  const taskLabel =
+    mode === "focus"
+      ? activeTodo
+        ? activeTodo.text
+        : "No task selected"
+      : activeTodo
+        ? activeTodo.text
+        : null;
+
   return (
     <section
       aria-label="Pomodoro timer"
@@ -57,19 +68,29 @@ export function Timer({
         isPrimary ? "gap-5" : "gap-3"
       }`}
     >
-      <div className="flex w-full items-center justify-between gap-2">
+      {!minimal && (
+        <div className="flex w-full items-center justify-between gap-2">
+          <span
+            className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${MODE_BG[mode]}`}
+          >
+            {modeLabel(mode)}
+          </span>
+          <span
+            className="text-xs text-zinc-500 dark:text-zinc-400"
+            title="Completed Focus sessions toward next long break (Skip does not count)"
+          >
+            Long break in {Math.max(0, 4 - focusTowardLongBreak)}
+          </span>
+        </div>
+      )}
+
+      {minimal && (
         <span
           className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${MODE_BG[mode]}`}
         >
           {modeLabel(mode)}
         </span>
-        <span
-          className="text-xs text-zinc-500 dark:text-zinc-400"
-          title="Completed Focus sessions toward next long break (Skip does not count)"
-        >
-          Long break in {Math.max(0, 4 - focusTowardLongBreak)}
-        </span>
-      </div>
+      )}
 
       <div
         className="relative"
@@ -100,7 +121,7 @@ export function Timer({
             strokeDashoffset={offset}
           />
         </svg>
-        <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <div className="absolute inset-0 flex flex-col items-center justify-center px-4">
           <span
             className={`font-semibold tabular-nums tracking-tight text-zinc-900 dark:text-zinc-50 ${
               isPrimary ? "text-5xl sm:text-6xl" : "text-4xl"
@@ -108,11 +129,23 @@ export function Timer({
           >
             {formatTime(secondsLeft)}
           </span>
-          <span className="mt-1 max-w-[12rem] truncate text-center text-sm text-zinc-500 dark:text-zinc-400">
-            {activeTodo ? activeTodo.text : "No task selected"}
-          </span>
         </div>
       </div>
+
+      {/* Task title under clock for entire Focus (placeholder if unlinked) */}
+      {mode === "focus" && (
+        <p
+          className="max-w-sm truncate text-center text-base font-medium text-zinc-800 dark:text-zinc-100"
+          title={taskLabel ?? undefined}
+        >
+          {taskLabel}
+        </p>
+      )}
+      {mode !== "focus" && taskLabel && !minimal && (
+        <p className="max-w-sm truncate text-center text-sm text-zinc-500 dark:text-zinc-400">
+          {taskLabel}
+        </p>
+      )}
 
       <div className="flex flex-wrap items-center justify-center gap-2">
         {status === "idle" && (

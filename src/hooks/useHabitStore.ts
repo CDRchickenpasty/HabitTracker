@@ -27,6 +27,7 @@ import {
   modeLabel,
   nextModeAfterCompletion,
   playEndSound,
+  playPreEndCue,
 } from "@/lib/timerUtils";
 import type {
   AppSettings,
@@ -64,6 +65,11 @@ function persistTimer(timer: LiveTimerState): void {
   setPersistedState((prev) => ({ ...prev, timer }));
 }
 
+export type SessionToast =
+  | { kind: "preEnd" }
+  | { kind: "focusComplete" }
+  | null;
+
 export function useHabitStore() {
   useEffect(() => {
     hydrateFromStorage();
@@ -87,6 +93,10 @@ export function useHabitStore() {
   const [secondsLeft, setSecondsLeft] = useState(25 * 60);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [timerReady, setTimerReady] = useState(false);
+  /** Brief beat after a natural Focus completion (00:00 only). */
+  const [focusCredited, setFocusCredited] = useState(false);
+  /** Transient toast: pre-end cue or focus-complete a11y beat. */
+  const [sessionToast, setSessionToast] = useState<SessionToast>(null);
 
   const statusRef = useRef<TimerStatus>("idle");
   const modeRef = useRef<TimerMode>("focus");
@@ -96,6 +106,9 @@ export function useHabitStore() {
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completingRef = useRef(false);
   const restoredRef = useRef(false);
+  /** Once per running Focus session — fired in last 10s. */
+  const preEndCueFiredRef = useRef(false);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     statusRef.current = status;
@@ -109,6 +122,25 @@ export function useHabitStore() {
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  const clearToastTimer = useCallback(() => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
+  }, []);
+
+  const showTransientToast = useCallback(
+    (toast: Exclude<SessionToast, null>, ms = 3500) => {
+      clearToastTimer();
+      setSessionToast(toast);
+      toastTimerRef.current = setTimeout(() => {
+        setSessionToast(null);
+        toastTimerRef.current = null;
+      }, ms);
+    },
+    [clearToastTimer]
+  );
 
   const durationFor = useCallback(
     (m: TimerMode, settings: AppSettings = stateRef.current.settings) =>
@@ -202,9 +234,10 @@ export function useHabitStore() {
       return next;
     });
 
+    // End sound respects mute
     if (settings.soundEnabled) playEndSound();
     await maybeNotify(
-      `${modeLabel(completedMode)} complete`,
+      completedMode === "focus" ? "Focus complete" : `${modeLabel(completedMode)} complete`,
       nextMode === "focus"
         ? "Time to focus."
         : `Time for a ${modeLabel(nextMode).toLowerCase()}.`,
@@ -216,11 +249,34 @@ export function useHabitStore() {
     secondsLeftRef.current = nextSecs;
     statusRef.current = "idle";
     endsAtRef.current = null;
+    preEndCueFiredRef.current = false;
     setMode(nextMode);
     setSecondsLeft(nextSecs);
     setStatus("idle");
+
+    // Credit beat ONLY on natural Focus completion (00:00 path)
+    if (completedMode === "focus") {
+      setFocusCredited(true);
+      showTransientToast({ kind: "focusComplete" }, 2500);
+    }
+
     completingRef.current = false;
-  }, [clearTick, durationFor]);
+  }, [clearTick, durationFor, showTransientToast]);
+
+  const maybeFirePreEndCue = useCallback(
+    (nextSeconds: number) => {
+      if (preEndCueFiredRef.current) return;
+      if (modeRef.current !== "focus") return;
+      if (statusRef.current !== "running") return;
+      if (!stateRef.current.settings.preEndCueEnabled) return;
+      // Bart contract: once in last 10s (not on skip/reset)
+      if (nextSeconds > 10 || nextSeconds <= 0) return;
+      preEndCueFiredRef.current = true;
+      if (stateRef.current.settings.soundEnabled) playPreEndCue();
+      showTransientToast({ kind: "preEnd" }, 4000);
+    },
+    [showTransientToast]
+  );
 
   const startTick = useCallback(() => {
     clearTick();
@@ -244,10 +300,16 @@ export function useHabitStore() {
       }
       secondsLeftRef.current = next;
       setSecondsLeft(next);
+      maybeFirePreEndCue(next);
     }, 1000);
-  }, [clearTick, onSessionComplete]);
+  }, [clearTick, onSessionComplete, maybeFirePreEndCue]);
 
-  useEffect(() => () => clearTick(), [clearTick]);
+  useEffect(() => {
+    return () => {
+      clearTick();
+      clearToastTimer();
+    };
+  }, [clearTick, clearToastTimer]);
 
   // Restore live timer from persisted state once after hydrate
   useEffect(() => {
@@ -277,6 +339,8 @@ export function useHabitStore() {
       secondsLeftRef.current = remaining;
       statusRef.current = "running";
       endsAtRef.current = saved.endsAt;
+      // If already in last 10s on restore, don't re-fire cue
+      if (remaining <= 10) preEndCueFiredRef.current = true;
       setSecondsLeft(remaining);
       setStatus("running");
       // Keep endsAt; refresh secondsLeft snapshot in storage
@@ -308,6 +372,7 @@ export function useHabitStore() {
       secondsLeftRef.current = secs;
       statusRef.current = "paused";
       endsAtRef.current = null;
+      if (secs <= 10) preEndCueFiredRef.current = true;
       setSecondsLeft(secs);
       setStatus("paused");
       persistTimer({
@@ -346,6 +411,8 @@ export function useHabitStore() {
     setSecondsLeft(secs);
     statusRef.current = "running";
     setStatus("running");
+    preEndCueFiredRef.current = false;
+    setFocusCredited(false);
     writeTimer({
       mode: modeRef.current,
       status: "running",
@@ -394,6 +461,7 @@ export function useHabitStore() {
     startTick();
   }, [startTick, writeTimer, onSessionComplete]);
 
+  /** Reset without credit — caller must confirm for in-progress Focus. */
   const reset = useCallback(() => {
     clearTick();
     statusRef.current = "idle";
@@ -401,6 +469,7 @@ export function useHabitStore() {
     const secs = durationFor(modeRef.current);
     secondsLeftRef.current = secs;
     setSecondsLeft(secs);
+    preEndCueFiredRef.current = false;
     writeTimer({
       mode: modeRef.current,
       status: "idle",
@@ -409,6 +478,7 @@ export function useHabitStore() {
     });
   }, [clearTick, durationFor, writeTimer]);
 
+  /** Skip without credit — caller must confirm for in-progress Focus. */
   const skip = useCallback(() => {
     clearTick();
     const current = modeRef.current;
@@ -417,6 +487,7 @@ export function useHabitStore() {
     modeRef.current = nextMode;
     secondsLeftRef.current = secs;
     statusRef.current = "idle";
+    preEndCueFiredRef.current = false;
     setMode(nextMode);
     setSecondsLeft(secs);
     setStatus("idle");
@@ -479,12 +550,33 @@ export function useHabitStore() {
     }));
   }, []);
 
-  const updateSettings = useCallback((patch: Partial<AppSettings>) => {
-    setPersistedState((prev) => {
-      const settings = mergeSettings(prev.settings, patch);
-      return { ...prev, settings };
-    });
-  }, []);
+  const updateSettings = useCallback(
+    (patch: Partial<AppSettings>) => {
+      setPersistedState((prev) => {
+        const settings = mergeSettings(prev.settings, patch);
+        return { ...prev, settings };
+      });
+
+      // Soft presets / duration edits: refresh idle clock so Focus duration shows immediately
+      const nextSettings = mergeSettings(stateRef.current.settings, patch);
+      if (statusRef.current === "idle") {
+        const secs = durationSecondsForMode(
+          modeRef.current,
+          nextSettings.durations,
+          nextSettings.testOverrides
+        );
+        secondsLeftRef.current = secs;
+        setSecondsLeft(secs);
+        writeTimer({
+          mode: modeRef.current,
+          status: "idle",
+          secondsLeft: secs,
+          endsAt: null,
+        });
+      }
+    },
+    [writeTimer]
+  );
 
   const seedTesting = useCallback(
     (seed: {
@@ -531,6 +623,7 @@ export function useHabitStore() {
       modeRef.current = m;
       secondsLeftRef.current = secs;
       statusRef.current = "idle";
+      preEndCueFiredRef.current = false;
       setMode(m);
       setSecondsLeft(secs);
       setStatus("idle");
@@ -544,6 +637,15 @@ export function useHabitStore() {
     [clearTick, durationFor, writeTimer]
   );
 
+  const dismissFocusCredited = useCallback(() => {
+    setFocusCredited(false);
+  }, []);
+
+  const dismissSessionToast = useCallback(() => {
+    clearToastTimer();
+    setSessionToast(null);
+  }, [clearToastTimer]);
+
   const today = getTodayLocalDateString(state.settings);
   const todayStats = state.dailyStats[today] ?? emptyDaily(today);
   const displayStreak = useMemo(
@@ -556,6 +658,10 @@ export function useHabitStore() {
   const totalForMode = configuredSeconds;
   const progress =
     totalForMode > 0 ? 1 - displaySeconds / totalForMode : 0;
+
+  /** In-progress Focus that would get zero credit if abandoned. */
+  const focusInProgress =
+    mode === "focus" && (status === "running" || status === "paused");
 
   return {
     hydrated: hydrated && timerReady,
@@ -573,6 +679,11 @@ export function useHabitStore() {
     streak: displayStreak,
     focusTowardLongBreak: state.focusTowardLongBreak,
     todayStats,
+    focusCredited,
+    dismissFocusCredited,
+    sessionToast,
+    dismissSessionToast,
+    focusInProgress,
     start,
     pause,
     resume,
