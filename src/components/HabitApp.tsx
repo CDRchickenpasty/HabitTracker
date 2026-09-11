@@ -197,6 +197,10 @@ export function HabitApp() {
         )}
       </main>
 
+      <footer className="mx-auto max-w-3xl px-4 pb-6 text-center text-xs text-zinc-400 dark:text-zinc-500 sm:px-6">
+        <span aria-label="App version">v1.1.0</span>
+      </footer>
+
       <SettingsPanel
         open={store.settingsOpen}
         onClose={() => store.setSettingsOpen(false)}
