@@ -26,6 +26,9 @@ interface SettingsPanelProps {
     bestStreak?: number;
     focusTowardLongBreak?: number;
   }) => void;
+  onExportData: () => string;
+  onImportData: (json: string) => void;
+  onClearAllData: () => void;
 }
 
 export function SettingsPanel({
@@ -36,6 +39,9 @@ export function SettingsPanel({
   focusTowardLongBreak,
   onUpdateSettings,
   onSeedTesting,
+  onExportData,
+  onImportData,
+  onClearAllData,
 }: SettingsPanelProps) {
   const effectiveToday = getTodayLocalDateString(settings);
   const [seedLastDate, setSeedLastDate] = useState(
@@ -44,9 +50,54 @@ export function SettingsPanel({
   const [seedCurrent, setSeedCurrent] = useState(streak.currentStreak);
   const [seedBest, setSeedBest] = useState(streak.bestStreak);
   const [seedCounter, setSeedCounter] = useState(focusTowardLongBreak);
+  const [dataMessage, setDataMessage] = useState<string | null>(null);
   const closeBtnRef = useRef<HTMLButtonElement>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
   const handleClose = useCallback(() => onClose(), [onClose]);
   const panelRef = useDialogA11y(open, handleClose, closeBtnRef);
+
+  const handleExport = useCallback(() => {
+    try {
+      const json = onExportData();
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `habit-tracker-backup-${toLocalDateString()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setDataMessage("Backup downloaded.");
+    } catch {
+      setDataMessage("Export failed.");
+    }
+  }, [onExportData]);
+
+  const handleImportFile = useCallback(
+    async (file: File | null) => {
+      if (!file) return;
+      const ok = window.confirm(
+        "Replace all current data with this backup? This cannot be undone."
+      );
+      if (!ok) return;
+      try {
+        const text = await file.text();
+        onImportData(text);
+        setDataMessage("Backup imported.");
+      } catch {
+        setDataMessage("Import failed — invalid or unreadable JSON.");
+      }
+    },
+    [onImportData]
+  );
+
+  const handleClearAll = useCallback(() => {
+    const ok = window.confirm(
+      "Clear all local app data (todos, streak, settings, timer)? This cannot be undone."
+    );
+    if (!ok) return;
+    onClearAllData();
+    setDataMessage("All local data cleared.");
+  }, [onClearAllData]);
 
   if (!open) return null;
 
@@ -192,6 +243,59 @@ export function SettingsPanel({
               }
             }}
           />
+        </fieldset>
+
+        <fieldset className="mb-5 space-y-3">
+          <legend className="mb-2 text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+            Data
+          </legend>
+          <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+            Everything stays on this device. Export a JSON backup, import one
+            later, or clear all local data.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handleExport}
+              className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
+            >
+              Export
+            </button>
+            <button
+              type="button"
+              onClick={() => importInputRef.current?.click()}
+              className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
+            >
+              Import
+            </button>
+            <button
+              type="button"
+              onClick={handleClearAll}
+              className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-800 hover:bg-rose-100 dark:border-rose-700 dark:bg-rose-950/40 dark:text-rose-200 dark:hover:bg-rose-950/70"
+            >
+              Clear all data
+            </button>
+          </div>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            aria-label="Import backup JSON file"
+            onChange={(e) => {
+              const file = e.target.files?.[0] ?? null;
+              void handleImportFile(file);
+              e.target.value = "";
+            }}
+          />
+          {dataMessage && (
+            <p
+              className="text-xs font-medium text-zinc-600 dark:text-zinc-300"
+              role="status"
+            >
+              {dataMessage}
+            </p>
+          )}
         </fieldset>
 
         <div className="mb-5 rounded-2xl border border-zinc-200 bg-zinc-50 p-3 text-xs leading-relaxed text-zinc-600 dark:border-zinc-700 dark:bg-zinc-800/60 dark:text-zinc-300">

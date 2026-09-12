@@ -209,6 +209,9 @@ export function HabitApp() {
         focusTowardLongBreak={store.focusTowardLongBreak}
         onUpdateSettings={store.updateSettings}
         onSeedTesting={store.seedTesting}
+        onExportData={store.exportDataJson}
+        onImportData={store.importDataJson}
+        onClearAllData={store.clearAllData}
       />
 
       {store.focusCredited && (

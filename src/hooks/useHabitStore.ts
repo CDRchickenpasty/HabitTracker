@@ -14,10 +14,16 @@ import {
   resolveDisplayStreak,
 } from "@/lib/streaks";
 import {
+  clearToDefaultState,
+  exportStateToJson,
+  importStateFromJson,
+} from "@/lib/storage";
+import {
   getServerSnapshot,
   getSnapshot,
   hydrateFromStorage,
   isStoreHydrated,
+  replacePersistedState,
   setPersistedState,
   subscribe,
 } from "@/lib/store";
@@ -616,6 +622,118 @@ export function useHabitStore() {
     []
   );
 
+  /** Apply a full replaced snapshot and sync live timer UI/refs. */
+  const applyReplacedState = useCallback(
+    (next: PersistedState) => {
+      clearTick();
+      clearToastTimer();
+      completingRef.current = false;
+      preEndCueFiredRef.current = false;
+      setFocusCredited(false);
+      setSessionToast(null);
+
+      const today = getTodayLocalDateString(next.settings);
+      const withDisplayStreak = {
+        ...next,
+        streak: resolveDisplayStreak(next.streak, today),
+      };
+      replacePersistedState(withDisplayStreak);
+
+      const saved = withDisplayStreak.timer;
+      const settings = withDisplayStreak.settings;
+
+      if (saved.status === "running" && saved.endsAt != null) {
+        const remaining = Math.ceil((saved.endsAt - Date.now()) / 1000);
+        modeRef.current = saved.mode;
+        setMode(saved.mode);
+        if (remaining <= 0) {
+          // Expired while away — land idle on that mode with full duration
+          const secs = durationFor(saved.mode, settings);
+          secondsLeftRef.current = secs;
+          statusRef.current = "idle";
+          endsAtRef.current = null;
+          setSecondsLeft(secs);
+          setStatus("idle");
+          writeTimer({
+            mode: saved.mode,
+            status: "idle",
+            secondsLeft: secs,
+            endsAt: null,
+          });
+          return;
+        }
+        secondsLeftRef.current = remaining;
+        statusRef.current = "running";
+        endsAtRef.current = saved.endsAt;
+        if (remaining <= 10) preEndCueFiredRef.current = true;
+        setSecondsLeft(remaining);
+        setStatus("running");
+        writeTimer({
+          mode: saved.mode,
+          status: "running",
+          secondsLeft: remaining,
+          endsAt: saved.endsAt,
+        });
+        startTick();
+        return;
+      }
+
+      if (saved.status === "paused") {
+        const secs =
+          saved.secondsLeft > 0
+            ? saved.secondsLeft
+            : durationFor(saved.mode, settings);
+        modeRef.current = saved.mode;
+        secondsLeftRef.current = secs;
+        statusRef.current = "paused";
+        endsAtRef.current = null;
+        if (secs <= 10) preEndCueFiredRef.current = true;
+        setMode(saved.mode);
+        setSecondsLeft(secs);
+        setStatus("paused");
+        writeTimer({
+          mode: saved.mode,
+          status: "paused",
+          secondsLeft: secs,
+          endsAt: null,
+        });
+        return;
+      }
+
+      const idleSecs = durationFor(saved.mode, settings);
+      modeRef.current = saved.mode;
+      secondsLeftRef.current = idleSecs;
+      statusRef.current = "idle";
+      endsAtRef.current = null;
+      setMode(saved.mode);
+      setSecondsLeft(idleSecs);
+      setStatus("idle");
+      writeTimer({
+        mode: saved.mode,
+        status: "idle",
+        secondsLeft: idleSecs,
+        endsAt: null,
+      });
+    },
+    [clearTick, clearToastTimer, durationFor, startTick, writeTimer]
+  );
+
+  const exportDataJson = useCallback(() => {
+    return exportStateToJson(getSnapshot());
+  }, []);
+
+  const importDataJson = useCallback(
+    (json: string) => {
+      const next = importStateFromJson(json);
+      applyReplacedState(next);
+    },
+    [applyReplacedState]
+  );
+
+  const clearAllData = useCallback(() => {
+    applyReplacedState(clearToDefaultState());
+  }, [applyReplacedState]);
+
   const resetClockToMode = useCallback(
     (m: TimerMode, settings?: AppSettings) => {
       clearTick();
@@ -696,6 +814,9 @@ export function useHabitStore() {
     selectTodo,
     updateSettings,
     seedTesting,
+    exportDataJson,
+    importDataJson,
+    clearAllData,
     resetClockToMode,
   };
 }
