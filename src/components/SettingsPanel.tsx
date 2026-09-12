@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   getTodayLocalDateString,
   previousLocalDate,
@@ -11,6 +11,7 @@ import {
   type AppSettings,
   type StreakState,
 } from "@/lib/types";
+import { useDialogA11y } from "@/hooks/useDialogA11y";
 
 interface SettingsPanelProps {
   open: boolean;
@@ -43,20 +44,27 @@ export function SettingsPanel({
   const [seedCurrent, setSeedCurrent] = useState(streak.currentStreak);
   const [seedBest, setSeedBest] = useState(streak.bestStreak);
   const [seedCounter, setSeedCounter] = useState(focusTowardLongBreak);
+  const closeBtnRef = useRef<HTMLButtonElement>(null);
+  const handleClose = useCallback(() => onClose(), [onClose]);
+  const panelRef = useDialogA11y(open, handleClose, closeBtnRef);
 
   if (!open) return null;
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="settings-title"
+      role="presentation"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-zinc-200 bg-white p-5 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-title"
+        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-zinc-200 bg-white p-5 shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
+      >
         <div className="mb-4 flex items-center justify-between">
           <h2
             id="settings-title"
@@ -65,6 +73,7 @@ export function SettingsPanel({
             Settings
           </h2>
           <button
+            ref={closeBtnRef}
             type="button"
             onClick={onClose}
             className="rounded-lg px-3 py-1.5 text-sm font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"

@@ -31,6 +31,13 @@ export function TodayStrip({ todayStats, streak, compact = false }: TodayStripPr
     );
   }
 
+  // PL13: zero-day coaching hints on full strip only
+  const todayHint = focusCount === 0 ? "not yet" : "Focus";
+  const streakHint =
+    focusCount === 0 && streakDays === 0
+      ? "start today"
+      : `best ${streak.bestStreak}`;
+
   return (
     <section
       aria-label="Today summary"
@@ -39,7 +46,7 @@ export function TodayStrip({ todayStats, streak, compact = false }: TodayStripPr
       <Stat
         label="Today"
         value={String(focusCount)}
-        hint={focusCount === 1 ? "Focus" : "Focus"}
+        hint={todayHint}
         caption={`Today · ${focusCount} Focus`}
       />
       <Stat
@@ -50,7 +57,7 @@ export function TodayStrip({ todayStats, streak, compact = false }: TodayStripPr
       <Stat
         label="Streak"
         value={String(streakDays)}
-        hint={`best ${streak.bestStreak}`}
+        hint={streakHint}
         caption={`Streak · ${streakDays} days`}
       />
     </section>

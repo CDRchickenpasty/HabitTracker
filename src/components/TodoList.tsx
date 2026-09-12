@@ -1,14 +1,12 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
-import type { DailyStats, StreakState, Todo } from "@/lib/types";
+import type { Todo } from "@/lib/types";
 
 interface TodoListProps {
   todos: Todo[];
   activeTodoId: string | null;
   isPrimary: boolean;
-  todayStats: DailyStats;
-  streak: StreakState;
   onAdd: (text: string) => void;
   onToggle: (id: string) => void;
   onDelete: (id: string) => void;
@@ -20,8 +18,6 @@ export function TodoList({
   todos,
   activeTodoId,
   isPrimary,
-  todayStats,
-  streak,
   onAdd,
   onToggle,
   onDelete,
@@ -68,9 +64,6 @@ export function TodoList({
     setDraft("");
   }
 
-  const focusCount = todayStats.focusSessionsCompleted;
-  const streakDays = streak.currentStreak;
-
   return (
     <section
       aria-label="Todos"
@@ -78,17 +71,11 @@ export function TodoList({
         isPrimary ? "p-5" : "p-4"
       }`}
     >
+      {/* PL12: Todos heading only — Today/Streak live on TodayStrip */}
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
           Todos
         </h2>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-medium tabular-nums text-zinc-600 dark:text-zinc-300">
-          <span>Today · {focusCount} Focus</span>
-          <span className="text-zinc-300 dark:text-zinc-600" aria-hidden>
-            ·
-          </span>
-          <span>Streak · {streakDays} days</span>
-        </div>
       </div>
 
       <form onSubmit={handleSubmit} className="mb-4 flex gap-2">
