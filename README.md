@@ -1,6 +1,6 @@
 # Habit Tracker
 
-Local-first **Pomodoro + Todos + habit streaks** web app (v1).
+Local-first **Pomodoro + Todos + habit streaks** web app (**v1.1.0**).
 
 - **Stack:** Next.js App Router, TypeScript, Tailwind CSS
 - **Persistence:** `localStorage` only (no accounts, sync, or backend)
@@ -36,7 +36,7 @@ Or with the CLI:
 npx vercel
 ```
 
-## Product loop (v1)
+## Product loop (v1.1)
 
 1. Add todos (list is not day-scoped in v1 — it persists until you clear items).
 2. Select one task as the current focus (shown under the timer for the whole Focus).
@@ -55,13 +55,14 @@ npx vercel
 | Short break | 5 min   | After a completed Focus (until 4th)        |
 | Long break  | 15 min  | After **4 completed** Focus sessions       |
 
-Controls: **Start**, **Pause**, **Resume**, **Reset**, **Skip**.
+Controls: **Start**, **Pause**, **Resume**, **Reset**, **Skip**. Idle shows **Start** only (PL11).
 
 - After each **completed** Focus → auto-advance to break + credit beat.
 - After 4 completed Focus sessions → next break is **Long break**; counter resets.
 - **Skip / Reset do not** credit Focus (abandon confirm when Focus is in progress). Skip also does not increment the focus-toward-long-break counter.
 - Optional **end sound** (muted when End sound is off) and permission-gated browser Notification.
 - Optional **pre-end cue** (Settings): once in the last 10s of a Focus — soft sound (if End sound on) + toast. Not fired on skip/reset.
+- **Tab title** shows remaining time while a session is active (`mm:ss · task/mode`).
 - **Live timer persists** across refresh: mode / status / remaining time are saved. If a session was **running**, remaining time is recomputed from wall clock (`endsAt`); if it hit 0 while away, the same completion path runs (advance mode, credit Focus if applicable).
 
 ## Todos
@@ -70,7 +71,9 @@ Controls: **Start**, **Pause**, **Resume**, **Reset**, **Skip**.
 - Select one as current focus (persisted with the list in `localStorage`)
 - Focus completion does **not** check off the todo
 - Empty state teaches the loop: only completed Focus counts toward the streak
-- List chrome shows **Today · N Focus** and **Streak · N days**
+- Focus with no linked task: under-clock CTA **Pick a task to focus** (PL11; Start still allowed)
+- Break with no linked task: priming hint **Pick a task for your next Focus** (AD3)
+- TodayStrip shows **Today · N Focus** and **Streak · N days** (TodoList header is **Todos** only — PL12)
 
 ## Habit streaks
 
@@ -80,7 +83,7 @@ Documented rules (also summarized in Settings):
 2. **Day** = device local date, stored as `YYYY-MM-DD` (not UTC).
 3. **Incomplete / paused / skipped** Focus sessions never count.
 4. **Breaks** never count.
-5. Current + best streak are shown on the Today strip, list header, and in Settings.
+5. Current + best streak are shown on the Today strip and in Settings (not duplicated in the TodoList header — PL12).
 
 Out of scope for v1: day-start offset, off-days, freeze/repair, estimates, export, sync, accounts, gamification / RPG / social.
 
@@ -91,6 +94,7 @@ Shows:
 - Focus sessions completed today (`Today · N Focus`)
 - Focus minutes completed today
 - Current streak (`Streak · N days`, with best as hint)
+- Zero-day coaching on full strip only (PL13): Focus hint `not yet`; streak `start today` when both are 0
 
 ## QA / Testing hooks
 
@@ -113,6 +117,12 @@ src/
   hooks/         # useHabitStore (timer + persistence)
   lib/           # types, dates, streaks, storage, timerUtils
 ```
+
+## Docs
+
+- [v1 copy pack](docs/v1-copy-pack.md) — locked in-app strings (Ellis → Jordan/Nora)
+- [PL1–PL9 acceptance](docs/pl1-pl9-acceptance.md) — polish acceptance (Priya)
+- [v1 release notes (draft)](docs/v1-release-notes.md) — ship notes pending Bart go
 
 ## License
 
