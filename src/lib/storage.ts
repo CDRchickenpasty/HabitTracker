@@ -24,6 +24,30 @@ function isBrowser(): boolean {
   return typeof window !== "undefined";
 }
 
+/** Epoch ms watermark for cloud conflict decisions (separate from app blob). */
+export const LOCAL_UPDATED_AT_KEY = "habit-tracker-local-updated-at";
+
+export function getLocalUpdatedAtMs(): number | null {
+  if (!isBrowser()) return null;
+  try {
+    const raw = window.localStorage.getItem(LOCAL_UPDATED_AT_KEY);
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+export function touchLocalUpdatedAt(atMs: number = Date.now()): void {
+  if (!isBrowser()) return;
+  try {
+    window.localStorage.setItem(LOCAL_UPDATED_AT_KEY, String(atMs));
+  } catch {
+    // ignore quota
+  }
+}
+
 /** Fresh default persisted snapshot (deep-enough clone; safe to mutate). */
 export function createDefaultPersistedState(): PersistedState {
   return {

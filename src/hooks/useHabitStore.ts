@@ -28,6 +28,8 @@ import {
   importStateFromJson,
   subscribeSaveErrors,
 } from "@/lib/storage";
+import { isCloudConfigured } from "@/lib/supabase/config";
+import { pushFocusSession, pushRemoteState } from "@/lib/supabase/sync";
 import {
   getServerSnapshot,
   getSnapshot,
@@ -236,22 +238,26 @@ export function useHabitStore() {
         (t) => t.id === stateRef.current.activeTodoId
       ) ?? null;
 
+    const completedSession =
+      completedMode === "focus"
+        ? createFocusSession({
+            localDate: today,
+            plannedMinutes,
+            todoId: activeTodo?.id ?? null,
+            todoTextSnapshot: activeTodo?.text ?? null,
+          })
+        : null;
+
     setPersistedState((prev) => {
       let next: PersistedState = { ...prev, focusTowardLongBreak };
 
-      if (completedMode === "focus") {
+      if (completedMode === "focus" && completedSession) {
         const streak = applyFocusCompletionToStreak(
           prev.streak,
           today,
           settings.kindness
         );
         const existing = prev.dailyStats[today] ?? emptyDaily(today);
-        const session = createFocusSession({
-          localDate: today,
-          plannedMinutes,
-          todoId: activeTodo?.id ?? null,
-          todoTextSnapshot: activeTodo?.text ?? null,
-        });
         next = {
           ...next,
           streak,
@@ -264,7 +270,10 @@ export function useHabitStore() {
                 existing.focusMinutesCompleted + plannedMinutes,
             },
           },
-          focusSessions: appendFocusSession(prev.focusSessions, session),
+          focusSessions: appendFocusSession(
+            prev.focusSessions,
+            completedSession
+          ),
         };
       }
 
@@ -315,6 +324,15 @@ export function useHabitStore() {
     if (completedMode === "focus") {
       setFocusCredited(true);
       showTransientToast({ kind: "focusComplete" }, 2500);
+      // Best-effort cloud mirror when signed in (guest / unsigned = no-op)
+      if (isCloudConfigured() && completedSession) {
+        void pushFocusSession(completedSession).catch(() => {
+          /* unsigned or offline — local already saved */
+        });
+        void pushRemoteState(getSnapshot()).catch(() => {
+          /* unsigned or offline */
+        });
+      }
     }
 
     completingRef.current = false;

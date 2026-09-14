@@ -1,5 +1,5 @@
 import { getTodayLocalDateString } from "./dates";
-import { loadState, saveState } from "./storage";
+import { loadState, saveState, touchLocalUpdatedAt } from "./storage";
 import { resolveDisplayStreak } from "./streaks";
 import { DEFAULT_STATE, type PersistedState } from "./types";
 
@@ -55,12 +55,18 @@ export function setPersistedState(
       ? (updater as (p: PersistedState) => PersistedState)(memory)
       : updater;
   memory = next;
-  if (hydrated) saveState(memory);
+  if (hydrated) {
+    saveState(memory);
+    touchLocalUpdatedAt();
+  }
   emit();
 }
 
 export function replacePersistedState(next: PersistedState): void {
   memory = next;
-  if (hydrated) saveState(memory);
+  if (hydrated) {
+    saveState(memory);
+    touchLocalUpdatedAt();
+  }
   emit();
 }

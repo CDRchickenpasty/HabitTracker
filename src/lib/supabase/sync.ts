@@ -1,6 +1,8 @@
-import { mergePersistedState } from "@/lib/storage";
+import { mergePersistedState, touchLocalUpdatedAt } from "@/lib/storage";
 import type { FocusSession, PersistedState } from "@/lib/types";
 import { getSupabase } from "./client";
+
+export { getLocalUpdatedAtMs, touchLocalUpdatedAt } from "@/lib/storage";
 
 const CLIENT_ID_KEY = "habit-tracker-client-id";
 
@@ -25,14 +27,34 @@ export type RemoteAppState = {
   client_id: string | null;
 };
 
-export async function pullRemoteState(): Promise<RemoteAppState | null> {
-  const supabase = getSupabase();
-  if (!supabase) return null;
+export class SyncAuthError extends Error {
+  constructor(message = "Not signed in") {
+    super(message);
+    this.name = "SyncAuthError";
+  }
+}
 
+export class SyncConfigError extends Error {
+  constructor(message = "Cloud sync is not configured") {
+    super(message);
+    this.name = "SyncConfigError";
+  }
+}
+
+async function requireUser() {
+  const supabase = getSupabase();
+  if (!supabase) throw new SyncConfigError();
   const {
     data: { user },
+    error,
   } = await supabase.auth.getUser();
-  if (!user) return null;
+  if (error) throw error;
+  if (!user) throw new SyncAuthError();
+  return { supabase, user };
+}
+
+export async function pullRemoteState(): Promise<RemoteAppState | null> {
+  const { supabase, user } = await requireUser();
 
   const { data, error } = await supabase
     .from("app_state")
@@ -52,36 +74,26 @@ export async function pullRemoteState(): Promise<RemoteAppState | null> {
 }
 
 export async function pushRemoteState(state: PersistedState): Promise<void> {
-  const supabase = getSupabase();
-  if (!supabase) return;
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return;
+  const { supabase, user } = await requireUser();
+  const updatedAt = new Date().toISOString();
 
   const { error } = await supabase.from("app_state").upsert(
     {
       user_id: user.id,
       version: state.version,
       state,
-      updated_at: new Date().toISOString(),
+      updated_at: updatedAt,
       client_id: getClientId(),
     },
     { onConflict: "user_id" }
   );
 
   if (error) throw error;
+  touchLocalUpdatedAt(Date.parse(updatedAt));
 }
 
 export async function pushFocusSession(session: FocusSession): Promise<void> {
-  const supabase = getSupabase();
-  if (!supabase) return;
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return;
+  const { supabase, user } = await requireUser();
 
   const { error } = await supabase.from("focus_sessions").upsert(
     {
@@ -98,8 +110,6 @@ export async function pushFocusSession(session: FocusSession): Promise<void> {
   if (error) throw error;
 }
 
-export type ConflictChoice = "keep-local" | "use-cloud";
-
 /**
  * Decide whether remote should replace local on sign-in.
  * Caller shows UI when remote.updated_at is newer than localSavedAt.
@@ -109,5 +119,8 @@ export function remoteIsNewer(
   localSavedAtMs: number | null
 ): boolean {
   if (localSavedAtMs == null) return true;
-  return new Date(remoteUpdatedAt).getTime() > localSavedAtMs;
+  const remoteMs = Date.parse(remoteUpdatedAt);
+  if (!Number.isFinite(remoteMs)) return true;
+  return remoteMs > localSavedAtMs;
 }
+
