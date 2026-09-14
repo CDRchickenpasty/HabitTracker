@@ -1,15 +1,23 @@
+import { mergeFocusSessions } from "./history";
+import { migrateToV2 } from "./migrate";
+import { mergeStreakState } from "./streaks";
 import {
+  DEFAULT_APPEARANCE,
+  DEFAULT_KINDNESS,
   DEFAULT_SETTINGS,
+  DEFAULT_STREAK,
   DEFAULT_TIMER,
   STORAGE_KEY,
-  type PersistedState,
+  STORAGE_KEY_V1,
+  type AccentTheme,
   type AppSettings,
+  type DailyStats,
+  type Density,
   type LiveTimerState,
+  type PersistedState,
   type TimerMode,
   type TimerStatus,
   type Todo,
-  type DailyStats,
-  type StreakState,
 } from "./types";
 
 function isBrowser(): boolean {
@@ -19,26 +27,38 @@ function isBrowser(): boolean {
 /** Fresh default persisted snapshot (deep-enough clone; safe to mutate). */
 export function createDefaultPersistedState(): PersistedState {
   return {
-    version: 1,
+    version: 2,
     todos: [],
     activeTodoId: null,
     settings: {
       ...DEFAULT_SETTINGS,
       durations: { ...DEFAULT_SETTINGS.durations },
       testOverrides: { ...DEFAULT_SETTINGS.testOverrides },
+      appearance: { ...DEFAULT_APPEARANCE },
+      kindness: { ...DEFAULT_KINDNESS },
     },
-    streak: {
-      lastQualifyingDate: null,
-      currentStreak: 0,
-      bestStreak: 0,
-    },
+    streak: { ...DEFAULT_STREAK, offDays: [], freezeUsedDates: [] },
     focusTowardLongBreak: 0,
     dailyStats: {},
     timer: { ...DEFAULT_TIMER },
+    focusSessions: [],
   };
 }
 
-export function mergeSettings(raw: Partial<AppSettings> | undefined): AppSettings {
+const ACCENTS: AccentTheme[] = [
+  "rose",
+  "emerald",
+  "sky",
+  "amber",
+  "violet",
+];
+
+export function mergeSettings(
+  raw: Partial<AppSettings> | undefined
+): AppSettings {
+  const appearanceRaw = raw?.appearance;
+  const kindnessRaw = raw?.kindness;
+
   return {
     ...DEFAULT_SETTINGS,
     ...raw,
@@ -51,18 +71,44 @@ export function mergeSettings(raw: Partial<AppSettings> | undefined): AppSetting
       ...(raw?.testOverrides ?? {}),
     },
     testToday:
-      typeof raw?.testToday === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw.testToday)
+      typeof raw?.testToday === "string" &&
+      /^\d{4}-\d{2}-\d{2}$/.test(raw.testToday)
         ? raw.testToday
         : raw?.testToday === null
           ? null
           : DEFAULT_SETTINGS.testToday,
+    appearance: {
+      accent:
+        appearanceRaw &&
+        ACCENTS.includes(appearanceRaw.accent as AccentTheme)
+          ? (appearanceRaw.accent as AccentTheme)
+          : DEFAULT_APPEARANCE.accent,
+      density:
+        appearanceRaw?.density === "comfortable" ||
+        appearanceRaw?.density === "compact"
+          ? (appearanceRaw.density as Density)
+          : DEFAULT_APPEARANCE.density,
+    },
+    kindness: {
+      enabled:
+        typeof kindnessRaw?.enabled === "boolean"
+          ? kindnessRaw.enabled
+          : DEFAULT_KINDNESS.enabled,
+      freezeEveryNDays:
+        typeof kindnessRaw?.freezeEveryNDays === "number" &&
+        Number.isFinite(kindnessRaw.freezeEveryNDays)
+          ? Math.max(1, Math.floor(kindnessRaw.freezeEveryNDays))
+          : DEFAULT_KINDNESS.freezeEveryNDays,
+    },
   };
 }
 
 const VALID_MODES: TimerMode[] = ["focus", "shortBreak", "longBreak"];
 const VALID_STATUSES: TimerStatus[] = ["idle", "running", "paused"];
 
-export function mergeTimer(raw: Partial<LiveTimerState> | undefined): LiveTimerState {
+export function mergeTimer(
+  raw: Partial<LiveTimerState> | undefined
+): LiveTimerState {
   if (!raw || typeof raw !== "object") {
     return { ...DEFAULT_TIMER };
   }
@@ -90,32 +136,37 @@ export function mergeTimer(raw: Partial<LiveTimerState> | undefined): LiveTimerS
     endsAt = null;
   }
 
-  return { mode, status, secondsLeft, endsAt };
-}
+  let sessionTotalSeconds: number | null = null;
+  if (
+    typeof raw.sessionTotalSeconds === "number" &&
+    Number.isFinite(raw.sessionTotalSeconds)
+  ) {
+    sessionTotalSeconds = Math.max(1, Math.floor(raw.sessionTotalSeconds));
+  } else if (status === "running" || status === "paused") {
+    sessionTotalSeconds = Math.max(1, secondsLeft || 1);
+  }
 
-function mergeStreak(raw: Partial<StreakState> | undefined): StreakState {
-  return {
-    lastQualifyingDate: raw?.lastQualifyingDate ?? null,
-    currentStreak:
-      typeof raw?.currentStreak === "number" && Number.isFinite(raw.currentStreak)
-        ? Math.max(0, Math.floor(raw.currentStreak))
-        : 0,
-    bestStreak:
-      typeof raw?.bestStreak === "number" && Number.isFinite(raw.bestStreak)
-        ? Math.max(0, Math.floor(raw.bestStreak))
-        : 0,
-  };
+  return { mode, status, secondsLeft, endsAt, sessionTotalSeconds };
 }
 
 function mergeTodos(raw: unknown): Todo[] {
   if (!Array.isArray(raw)) return [];
-  return raw.filter(
-    (t): t is Todo =>
-      !!t &&
-      typeof t === "object" &&
-      typeof (t as Todo).id === "string" &&
-      typeof (t as Todo).text === "string"
-  );
+  const out: Todo[] = [];
+  for (const t of raw) {
+    if (!t || typeof t !== "object") continue;
+    const todo = t as Partial<Todo>;
+    if (typeof todo.id !== "string" || typeof todo.text !== "string") continue;
+    out.push({
+      id: todo.id,
+      text: todo.text,
+      completed: typeof todo.completed === "boolean" ? todo.completed : false,
+      createdAt:
+        typeof todo.createdAt === "number" && Number.isFinite(todo.createdAt)
+          ? todo.createdAt
+          : Date.now(),
+    });
+  }
+  return out;
 }
 
 function mergeDailyStats(raw: unknown): Record<string, DailyStats> {
@@ -147,24 +198,30 @@ export function mergePersistedState(
     return createDefaultPersistedState();
   }
 
+  // Route through migrate so v1 blobs and partials get appearance/kindness/sessions
+  const migrated = migrateToV2(parsed);
+
   const focusTowardLongBreak =
     typeof parsed.focusTowardLongBreak === "number" &&
     Number.isFinite(parsed.focusTowardLongBreak)
       ? Math.min(3, Math.max(0, Math.floor(parsed.focusTowardLongBreak)))
-      : 0;
+      : migrated.focusTowardLongBreak;
 
   return {
-    version: 1,
-    todos: mergeTodos(parsed.todos),
+    version: 2,
+    todos: mergeTodos(parsed.todos ?? migrated.todos),
     activeTodoId:
       typeof parsed.activeTodoId === "string" || parsed.activeTodoId === null
         ? parsed.activeTodoId ?? null
-        : null,
-    settings: mergeSettings(parsed.settings),
-    streak: mergeStreak(parsed.streak),
+        : migrated.activeTodoId,
+    settings: mergeSettings(parsed.settings ?? migrated.settings),
+    streak: mergeStreakState(parsed.streak ?? migrated.streak),
     focusTowardLongBreak,
-    dailyStats: mergeDailyStats(parsed.dailyStats),
-    timer: mergeTimer(parsed.timer),
+    dailyStats: mergeDailyStats(parsed.dailyStats ?? migrated.dailyStats),
+    timer: mergeTimer(parsed.timer ?? migrated.timer),
+    focusSessions: mergeFocusSessions(
+      parsed.focusSessions ?? migrated.focusSessions
+    ),
   };
 }
 
@@ -197,23 +254,65 @@ export function clearToDefaultState(): PersistedState {
   return createDefaultPersistedState();
 }
 
+export type SaveResult = { ok: true } | { ok: false; error: string };
+
+let lastSaveError: string | null = null;
+const saveErrorListeners = new Set<() => void>();
+
+export function getLastSaveError(): string | null {
+  return lastSaveError;
+}
+
+export function subscribeSaveErrors(listener: () => void): () => void {
+  saveErrorListeners.add(listener);
+  return () => saveErrorListeners.delete(listener);
+}
+
+function setSaveError(error: string | null) {
+  lastSaveError = error;
+  for (const l of saveErrorListeners) l();
+}
+
 export function loadState(): PersistedState {
   if (!isBrowser()) return createDefaultPersistedState();
 
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return createDefaultPersistedState();
-    return parsePersistedJson(raw);
+    const rawV2 = window.localStorage.getItem(STORAGE_KEY);
+    if (rawV2) {
+      return parsePersistedJson(rawV2);
+    }
+
+    // One-time migrate from v1
+    const rawV1 = window.localStorage.getItem(STORAGE_KEY_V1);
+    if (rawV1) {
+      const migrated = parsePersistedJson(rawV1);
+      const result = saveState(migrated);
+      if (result.ok) {
+        try {
+          window.localStorage.removeItem(STORAGE_KEY_V1);
+        } catch {
+          // ignore
+        }
+      }
+      return migrated;
+    }
+
+    return createDefaultPersistedState();
   } catch {
     return createDefaultPersistedState();
   }
 }
 
-export function saveState(state: PersistedState): void {
-  if (!isBrowser()) return;
+export function saveState(state: PersistedState): SaveResult {
+  if (!isBrowser()) return { ok: true };
   try {
     window.localStorage.setItem(STORAGE_KEY, serializePersistedState(state));
-  } catch {
-    // Quota / private mode — ignore
+    setSaveError(null);
+    return { ok: true };
+  } catch (e) {
+    const message =
+      e instanceof Error ? e.message : "Failed to save local data";
+    setSaveError(message);
+    return { ok: false, error: message };
   }
 }

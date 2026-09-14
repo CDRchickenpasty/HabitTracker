@@ -15,7 +15,21 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Habit Tracker — Pomodoro · Todos · Streaks",
   description:
-    "Local-first Pomodoro timer with today todos and habit streaks. No account required.",
+    "Local-first Pomodoro timer with today todos and habit streaks. Optional cloud sync. No account required.",
+  applicationName: "Habit Tracker",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "Habit Tracker",
+  },
+  icons: {
+    icon: [
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: "/icon-192.png", sizes: "192x192", type: "image/png" }],
+  },
 };
 
 export const viewport: Viewport = {

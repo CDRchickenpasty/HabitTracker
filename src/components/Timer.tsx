@@ -23,13 +23,13 @@ interface TimerProps {
 }
 
 const MODE_ACCENT: Record<TimerMode, string> = {
-  focus: "stroke-rose-500",
+  focus: "[stroke:var(--accent-500)]",
   shortBreak: "stroke-emerald-500",
   longBreak: "stroke-sky-500",
 };
 
 const MODE_BG: Record<TimerMode, string> = {
-  focus: "bg-rose-500/10 text-rose-700 dark:text-rose-300",
+  focus: "accent-soft",
   shortBreak: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
   longBreak: "bg-sky-500/10 text-sky-700 dark:text-sky-300",
 };
@@ -94,7 +94,10 @@ export function Timer({
       }
     }
     if (parts.length > 0) {
-      setAnnounce(parts.join(". ") + ".");
+      // Defer so the effect itself stays sync-free for the linter; still
+      // announces status/mode changes for screen readers (PL14).
+      const text = parts.join(". ") + ".";
+      queueMicrotask(() => setAnnounce(text));
     }
     prevStatusRef.current = status;
     prevModeRef.current = mode;

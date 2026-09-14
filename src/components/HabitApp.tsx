@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useHabitStore } from "@/hooks/useHabitStore";
 import { useDialogA11y } from "@/hooks/useDialogA11y";
 import { formatTime, modeLabel } from "@/lib/timerUtils";
+import { HistoryPanel } from "./HistoryPanel";
+import { PwaRegister } from "./PwaRegister";
 import { SettingsPanel } from "./SettingsPanel";
 import { Timer } from "./Timer";
 import { TodayStrip } from "./TodayStrip";
@@ -17,6 +19,9 @@ export function HabitApp() {
   const store = useHabitStore();
   const { focusInProgress, reset, skip } = store;
   const [abandonPending, setAbandonPending] = useState<AbandonAction | null>(
+    null
+  );
+  const [pwaInstall, setPwaInstall] = useState<(() => Promise<void>) | null>(
     null
   );
 
@@ -106,8 +111,15 @@ export function HabitApp() {
     onSelectTodo: store.selectTodo,
   };
 
+  const accent = store.settings.appearance.accent;
+  const density = store.settings.appearance.density;
+
   return (
-    <div className="min-h-screen bg-gradient-to-b from-zinc-100 to-zinc-200 text-zinc-900 dark:from-zinc-950 dark:to-zinc-900 dark:text-zinc-50">
+    <div
+      className="min-h-screen bg-gradient-to-b from-zinc-100 to-zinc-200 text-zinc-900 dark:from-zinc-950 dark:to-zinc-900 dark:text-zinc-50"
+      data-accent={accent}
+      data-density={density}
+    >
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-white focus:px-3 focus:py-2"
@@ -125,19 +137,38 @@ export function HabitApp() {
               Pomodoro · Todos · Streaks
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => store.setSettingsOpen(true)}
-            className="rounded-full border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-800 shadow-sm hover:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
-            aria-haspopup="dialog"
-          >
-            Settings
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => store.setHistoryOpen(true)}
+              className="rounded-full border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-800 shadow-sm hover:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 accent-ring dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
+              aria-haspopup="dialog"
+            >
+              History
+            </button>
+            <button
+              type="button"
+              onClick={() => store.setSettingsOpen(true)}
+              className="rounded-full border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-800 shadow-sm hover:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 accent-ring dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700"
+              aria-haspopup="dialog"
+            >
+              Settings
+            </button>
+          </div>
         </header>
       )}
 
       {focusMinimal && (
-        <header className="mx-auto flex max-w-3xl items-center justify-end px-4 pt-4 sm:px-6">
+        <header className="mx-auto flex max-w-3xl items-center justify-end gap-2 px-4 pt-4 sm:px-6">
+          <button
+            type="button"
+            onClick={() => store.setHistoryOpen(true)}
+            className="rounded-full px-3 py-1.5 text-xs font-medium text-zinc-500 hover:bg-zinc-200/60 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+            aria-haspopup="dialog"
+            aria-label="Open history"
+          >
+            History
+          </button>
           <button
             type="button"
             onClick={() => store.setSettingsOpen(true)}
@@ -198,8 +229,10 @@ export function HabitApp() {
       </main>
 
       <footer className="mx-auto max-w-3xl px-4 pb-6 text-center text-xs text-zinc-400 dark:text-zinc-500 sm:px-6">
-        <span aria-label="App version">v1.1.0</span>
+        <span aria-label="App version">v2.0.0</span>
       </footer>
+
+      <PwaRegister onInstallAvailable={setPwaInstall} />
 
       <SettingsPanel
         open={store.settingsOpen}
@@ -212,6 +245,24 @@ export function HabitApp() {
         onExportData={store.exportDataJson}
         onImportData={store.importDataJson}
         onClearAllData={store.clearAllData}
+        onFreezeYesterday={store.freezeYesterday}
+        onRepairYesterday={store.repairYesterday}
+        onInstallPwa={pwaInstall}
+        getPersistedState={store.getPersistedState}
+        applyPersistedState={store.applyPersistedState}
+      />
+
+      <HistoryPanel
+        open={store.historyOpen}
+        onClose={() => store.setHistoryOpen(false)}
+        dailyStats={store.dailyStats}
+        focusSessions={store.focusSessions}
+        streak={store.streak}
+        settings={store.settings}
+        onMarkOffDay={store.markOffDay}
+        onUnmarkOffDay={store.unmarkOffDay}
+        onUseFreeze={store.applyFreezeForDate}
+        onRepair={store.repairStreakForDate}
       />
 
       {store.focusCredited && (
@@ -228,7 +279,7 @@ export function HabitApp() {
 
       {store.sessionToast && (
         <SessionToastBanner
-          kind={store.sessionToast.kind}
+          toast={store.sessionToast}
           onDismiss={store.dismissSessionToast}
         />
       )}
@@ -396,16 +447,23 @@ function AbandonConfirm({
 }
 
 function SessionToastBanner({
-  kind,
+  toast,
   onDismiss,
 }: {
-  kind: "preEnd" | "focusComplete";
+  toast: {
+    kind: "preEnd" | "focusComplete" | "saveError";
+    message?: string;
+  };
   onDismiss: () => void;
 }) {
   const message =
-    kind === "preEnd"
+    toast.kind === "preEnd"
       ? "Almost there — finish to credit this Focus"
-      : "Focus complete";
+      : toast.kind === "focusComplete"
+        ? "Focus complete"
+        : toast.message
+          ? `Couldn’t save: ${toast.message}`
+          : "Couldn’t save local data";
 
   return (
     <div
@@ -413,7 +471,13 @@ function SessionToastBanner({
       role="status"
       aria-live="polite"
     >
-      <div className="flex items-start gap-3 rounded-2xl border border-zinc-200 bg-white px-4 py-3 shadow-lg dark:border-zinc-600 dark:bg-zinc-900">
+      <div
+        className={`flex items-start gap-3 rounded-2xl border px-4 py-3 shadow-lg ${
+          toast.kind === "saveError"
+            ? "border-rose-300 bg-rose-50 dark:border-rose-700 dark:bg-rose-950/50"
+            : "border-zinc-200 bg-white dark:border-zinc-600 dark:bg-zinc-900"
+        }`}
+      >
         <p className="flex-1 text-sm font-medium text-zinc-800 dark:text-zinc-100">
           {message}
         </p>

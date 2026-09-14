@@ -8,15 +8,25 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { getTodayLocalDateString } from "@/lib/dates";
+import { getTodayLocalDateString, previousLocalDate } from "@/lib/dates";
 import {
+  appendFocusSession,
+  createFocusSession,
+} from "@/lib/history";
+import {
+  addOffDay,
   applyFocusCompletionToStreak,
+  applyRepair,
+  removeOffDay,
   resolveDisplayStreak,
+  spendFreeze,
 } from "@/lib/streaks";
 import {
   clearToDefaultState,
   exportStateToJson,
+  getLastSaveError,
   importStateFromJson,
+  subscribeSaveErrors,
 } from "@/lib/storage";
 import {
   getServerSnapshot,
@@ -64,6 +74,14 @@ function mergeSettings(
       ...base.testOverrides,
       ...(patch.testOverrides ?? {}),
     },
+    appearance: {
+      ...base.appearance,
+      ...(patch.appearance ?? {}),
+    },
+    kindness: {
+      ...base.kindness,
+      ...(patch.kindness ?? {}),
+    },
   };
 }
 
@@ -74,6 +92,7 @@ function persistTimer(timer: LiveTimerState): void {
 export type SessionToast =
   | { kind: "preEnd" }
   | { kind: "focusComplete" }
+  | { kind: "saveError"; message: string }
   | null;
 
 export function useHabitStore() {
@@ -93,11 +112,21 @@ export function useHabitStore() {
     () => false
   );
 
+  const saveError = useSyncExternalStore(
+    subscribeSaveErrors,
+    getLastSaveError,
+    () => null
+  );
+
   const [mode, setMode] = useState<TimerMode>("focus");
   const [status, setStatus] = useState<TimerStatus>("idle");
   /** Remaining seconds while running/paused. Idle uses derived full duration. */
   const [secondsLeft, setSecondsLeft] = useState(25 * 60);
+  const [sessionTotalSeconds, setSessionTotalSeconds] = useState<number | null>(
+    null
+  );
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [timerReady, setTimerReady] = useState(false);
   /** Brief beat after a natural Focus completion (00:00 only). */
   const [focusCredited, setFocusCredited] = useState(false);
@@ -107,6 +136,7 @@ export function useHabitStore() {
   const statusRef = useRef<TimerStatus>("idle");
   const modeRef = useRef<TimerMode>("focus");
   const secondsLeftRef = useRef(25 * 60);
+  const sessionTotalRef = useRef<number | null>(null);
   const endsAtRef = useRef<number | null>(null);
   const stateRef = useRef<PersistedState>(state);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -125,6 +155,9 @@ export function useHabitStore() {
   useEffect(() => {
     secondsLeftRef.current = secondsLeft;
   }, [secondsLeft]);
+  useEffect(() => {
+    sessionTotalRef.current = sessionTotalSeconds;
+  }, [sessionTotalSeconds]);
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
@@ -171,13 +204,10 @@ export function useHabitStore() {
   }, []);
 
   const writeTimer = useCallback(
-    (next: {
-      mode: TimerMode;
-      status: TimerStatus;
-      secondsLeft: number;
-      endsAt: number | null;
-    }) => {
+    (next: LiveTimerState) => {
       endsAtRef.current = next.endsAt;
+      sessionTotalRef.current = next.sessionTotalSeconds;
+      setSessionTotalSeconds(next.sessionTotalSeconds);
       persistTimer(next);
     },
     []
@@ -191,7 +221,8 @@ export function useHabitStore() {
 
     const completedMode = modeRef.current;
     const settings = stateRef.current.settings;
-    const plannedSeconds = durationFor(completedMode, settings);
+    const plannedSeconds =
+      sessionTotalRef.current ?? durationFor(completedMode, settings);
     const plannedMinutes = Math.max(1, Math.round(plannedSeconds / 60));
 
     const { mode: nextMode, focusTowardLongBreak } = nextModeAfterCompletion(
@@ -200,13 +231,27 @@ export function useHabitStore() {
     );
 
     const today = getTodayLocalDateString(settings);
+    const activeTodo =
+      stateRef.current.todos.find(
+        (t) => t.id === stateRef.current.activeTodoId
+      ) ?? null;
 
     setPersistedState((prev) => {
       let next: PersistedState = { ...prev, focusTowardLongBreak };
 
       if (completedMode === "focus") {
-        const streak = applyFocusCompletionToStreak(prev.streak, today);
+        const streak = applyFocusCompletionToStreak(
+          prev.streak,
+          today,
+          settings.kindness
+        );
         const existing = prev.dailyStats[today] ?? emptyDaily(today);
+        const session = createFocusSession({
+          localDate: today,
+          plannedMinutes,
+          todoId: activeTodo?.id ?? null,
+          todoTextSnapshot: activeTodo?.text ?? null,
+        });
         next = {
           ...next,
           streak,
@@ -219,6 +264,7 @@ export function useHabitStore() {
                 existing.focusMinutesCompleted + plannedMinutes,
             },
           },
+          focusSessions: appendFocusSession(prev.focusSessions, session),
         };
       }
 
@@ -234,6 +280,7 @@ export function useHabitStore() {
           status: "idle",
           secondsLeft: nextSecs,
           endsAt: null,
+          sessionTotalSeconds: null,
         },
       };
 
@@ -243,7 +290,9 @@ export function useHabitStore() {
     // End sound respects mute
     if (settings.soundEnabled) playEndSound();
     await maybeNotify(
-      completedMode === "focus" ? "Focus complete" : `${modeLabel(completedMode)} complete`,
+      completedMode === "focus"
+        ? "Focus complete"
+        : `${modeLabel(completedMode)} complete`,
       nextMode === "focus"
         ? "Time to focus."
         : `Time for a ${modeLabel(nextMode).toLowerCase()}.`,
@@ -253,11 +302,13 @@ export function useHabitStore() {
     const nextSecs = durationFor(nextMode, settings);
     modeRef.current = nextMode;
     secondsLeftRef.current = nextSecs;
+    sessionTotalRef.current = null;
     statusRef.current = "idle";
     endsAtRef.current = null;
     preEndCueFiredRef.current = false;
     setMode(nextMode);
     setSecondsLeft(nextSecs);
+    setSessionTotalSeconds(null);
     setStatus("idle");
 
     // Credit beat ONLY on natural Focus completion (00:00 path)
@@ -332,9 +383,12 @@ export function useHabitStore() {
 
       if (remaining <= 0) {
         secondsLeftRef.current = 0;
+        sessionTotalRef.current =
+          saved.sessionTotalSeconds ?? durationFor(saved.mode, settings);
         statusRef.current = "running";
         endsAtRef.current = null;
         setSecondsLeft(0);
+        setSessionTotalSeconds(sessionTotalRef.current);
         setStatus("running");
         setTimerReady(true);
         // Same completion path as a natural zero-cross
@@ -342,12 +396,17 @@ export function useHabitStore() {
         return;
       }
 
+      const total =
+        saved.sessionTotalSeconds ??
+        Math.max(remaining, durationFor(saved.mode, settings));
       secondsLeftRef.current = remaining;
+      sessionTotalRef.current = total;
       statusRef.current = "running";
       endsAtRef.current = saved.endsAt;
       // If already in last 10s on restore, don't re-fire cue
       if (remaining <= 10) preEndCueFiredRef.current = true;
       setSecondsLeft(remaining);
+      setSessionTotalSeconds(total);
       setStatus("running");
       // Keep endsAt; refresh secondsLeft snapshot in storage
       persistTimer({
@@ -355,6 +414,7 @@ export function useHabitStore() {
         status: "running",
         secondsLeft: remaining,
         endsAt: saved.endsAt,
+        sessionTotalSeconds: total,
       });
       startTick();
       setTimerReady(true);
@@ -366,26 +426,33 @@ export function useHabitStore() {
       setMode(saved.mode);
       if (saved.secondsLeft <= 0) {
         secondsLeftRef.current = 0;
+        sessionTotalRef.current =
+          saved.sessionTotalSeconds ?? durationFor(saved.mode, settings);
         statusRef.current = "paused";
         endsAtRef.current = null;
         setSecondsLeft(0);
+        setSessionTotalSeconds(sessionTotalRef.current);
         setStatus("paused");
         setTimerReady(true);
         void onSessionComplete();
         return;
       }
       const secs = saved.secondsLeft;
+      const total = saved.sessionTotalSeconds ?? secs;
       secondsLeftRef.current = secs;
+      sessionTotalRef.current = total;
       statusRef.current = "paused";
       endsAtRef.current = null;
       if (secs <= 10) preEndCueFiredRef.current = true;
       setSecondsLeft(secs);
+      setSessionTotalSeconds(total);
       setStatus("paused");
       persistTimer({
         mode: saved.mode,
         status: "paused",
         secondsLeft: secs,
         endsAt: null,
+        sessionTotalSeconds: total,
       });
       setTimerReady(true);
       return;
@@ -395,16 +462,19 @@ export function useHabitStore() {
     const idleSecs = durationFor(saved.mode, settings);
     modeRef.current = saved.mode;
     secondsLeftRef.current = idleSecs;
+    sessionTotalRef.current = null;
     statusRef.current = "idle";
     endsAtRef.current = null;
     setMode(saved.mode);
     setSecondsLeft(idleSecs);
+    setSessionTotalSeconds(null);
     setStatus("idle");
     persistTimer({
       mode: saved.mode,
       status: "idle",
       secondsLeft: idleSecs,
       endsAt: null,
+      sessionTotalSeconds: null,
     });
     setTimerReady(true);
   }, [hydrated, durationFor, onSessionComplete, startTick]);
@@ -414,7 +484,9 @@ export function useHabitStore() {
     const secs = durationFor(modeRef.current);
     const endsAt = Date.now() + secs * 1000;
     secondsLeftRef.current = secs;
+    sessionTotalRef.current = secs;
     setSecondsLeft(secs);
+    setSessionTotalSeconds(secs);
     statusRef.current = "running";
     setStatus("running");
     preEndCueFiredRef.current = false;
@@ -424,6 +496,7 @@ export function useHabitStore() {
       status: "running",
       secondsLeft: secs,
       endsAt,
+      sessionTotalSeconds: secs,
     });
     startTick();
   }, [startTick, durationFor, writeTimer]);
@@ -445,6 +518,7 @@ export function useHabitStore() {
       status: "paused",
       secondsLeft: rem,
       endsAt: null,
+      sessionTotalSeconds: sessionTotalRef.current,
     });
   }, [clearTick, writeTimer]);
 
@@ -456,6 +530,8 @@ export function useHabitStore() {
       return;
     }
     const endsAt = Date.now() + secs * 1000;
+    const total = sessionTotalRef.current ?? secs;
+    sessionTotalRef.current = total;
     statusRef.current = "running";
     setStatus("running");
     writeTimer({
@@ -463,6 +539,7 @@ export function useHabitStore() {
       status: "running",
       secondsLeft: secs,
       endsAt,
+      sessionTotalSeconds: total,
     });
     startTick();
   }, [startTick, writeTimer, onSessionComplete]);
@@ -474,13 +551,16 @@ export function useHabitStore() {
     setStatus("idle");
     const secs = durationFor(modeRef.current);
     secondsLeftRef.current = secs;
+    sessionTotalRef.current = null;
     setSecondsLeft(secs);
+    setSessionTotalSeconds(null);
     preEndCueFiredRef.current = false;
     writeTimer({
       mode: modeRef.current,
       status: "idle",
       secondsLeft: secs,
       endsAt: null,
+      sessionTotalSeconds: null,
     });
   }, [clearTick, durationFor, writeTimer]);
 
@@ -492,16 +572,19 @@ export function useHabitStore() {
     const secs = durationFor(nextMode);
     modeRef.current = nextMode;
     secondsLeftRef.current = secs;
+    sessionTotalRef.current = null;
     statusRef.current = "idle";
     preEndCueFiredRef.current = false;
     setMode(nextMode);
     setSecondsLeft(secs);
+    setSessionTotalSeconds(null);
     setStatus("idle");
     writeTimer({
       mode: nextMode,
       status: "idle",
       secondsLeft: secs,
       endsAt: null,
+      sessionTotalSeconds: null,
     });
   }, [clearTick, durationFor, writeTimer]);
 
@@ -578,6 +661,7 @@ export function useHabitStore() {
           status: "idle",
           secondsLeft: secs,
           endsAt: null,
+          sessionTotalSeconds: null,
         });
       }
     },
@@ -597,6 +681,7 @@ export function useHabitStore() {
           ...prev,
           streak: resolveDisplayStreak(
             {
+              ...prev.streak,
               lastQualifyingDate:
                 seed.lastQualifyingDate !== undefined
                   ? seed.lastQualifyingDate
@@ -610,7 +695,8 @@ export function useHabitStore() {
                   ? seed.bestStreak
                   : prev.streak.bestStreak,
             },
-            today
+            today,
+            prev.settings.kindness
           ),
           focusTowardLongBreak:
             seed.focusTowardLongBreak !== undefined
@@ -621,6 +707,56 @@ export function useHabitStore() {
     },
     []
   );
+
+  const markOffDay = useCallback((date: string) => {
+    setPersistedState((prev) => ({
+      ...prev,
+      streak: addOffDay(prev.streak, date),
+    }));
+  }, []);
+
+  const unmarkOffDay = useCallback((date: string) => {
+    setPersistedState((prev) => ({
+      ...prev,
+      streak: removeOffDay(prev.streak, date),
+    }));
+  }, []);
+
+  const applyFreezeForDate = useCallback((date: string) => {
+    setPersistedState((prev) => {
+      const next = spendFreeze(prev.streak, date);
+      if (!next) return prev;
+      const today = getTodayLocalDateString(prev.settings);
+      return {
+        ...prev,
+        streak: resolveDisplayStreak(next, today, prev.settings.kindness),
+      };
+    });
+  }, []);
+
+  const repairStreakForDate = useCallback((date: string) => {
+    setPersistedState((prev) => {
+      const today = getTodayLocalDateString(prev.settings);
+      const next = applyRepair(
+        prev.streak,
+        date,
+        today,
+        prev.settings.kindness
+      );
+      if (!next) return prev;
+      return { ...prev, streak: next };
+    });
+  }, []);
+
+  const freezeYesterday = useCallback(() => {
+    const today = getTodayLocalDateString(stateRef.current.settings);
+    applyFreezeForDate(previousLocalDate(today));
+  }, [applyFreezeForDate]);
+
+  const repairYesterday = useCallback(() => {
+    const today = getTodayLocalDateString(stateRef.current.settings);
+    repairStreakForDate(previousLocalDate(today));
+  }, [repairStreakForDate]);
 
   /** Apply a full replaced snapshot and sync live timer UI/refs. */
   const applyReplacedState = useCallback(
@@ -635,7 +771,11 @@ export function useHabitStore() {
       const today = getTodayLocalDateString(next.settings);
       const withDisplayStreak = {
         ...next,
-        streak: resolveDisplayStreak(next.streak, today),
+        streak: resolveDisplayStreak(
+          next.streak,
+          today,
+          next.settings.kindness
+        ),
       };
       replacePersistedState(withDisplayStreak);
 
@@ -647,55 +787,75 @@ export function useHabitStore() {
         modeRef.current = saved.mode;
         setMode(saved.mode);
         if (remaining <= 0) {
-          // Expired while away — land idle on that mode with full duration
-          const secs = durationFor(saved.mode, settings);
-          secondsLeftRef.current = secs;
-          statusRef.current = "idle";
+          // Align with hydrate restore: credit via the same completion path
+          const total =
+            saved.sessionTotalSeconds ?? durationFor(saved.mode, settings);
+          secondsLeftRef.current = 0;
+          sessionTotalRef.current = total;
+          statusRef.current = "running";
           endsAtRef.current = null;
-          setSecondsLeft(secs);
-          setStatus("idle");
-          writeTimer({
-            mode: saved.mode,
-            status: "idle",
-            secondsLeft: secs,
-            endsAt: null,
-          });
+          setSecondsLeft(0);
+          setSessionTotalSeconds(total);
+          setStatus("running");
+          void onSessionComplete();
           return;
         }
+        const total =
+          saved.sessionTotalSeconds ??
+          Math.max(remaining, durationFor(saved.mode, settings));
         secondsLeftRef.current = remaining;
+        sessionTotalRef.current = total;
         statusRef.current = "running";
         endsAtRef.current = saved.endsAt;
         if (remaining <= 10) preEndCueFiredRef.current = true;
         setSecondsLeft(remaining);
+        setSessionTotalSeconds(total);
         setStatus("running");
         writeTimer({
           mode: saved.mode,
           status: "running",
           secondsLeft: remaining,
           endsAt: saved.endsAt,
+          sessionTotalSeconds: total,
         });
         startTick();
         return;
       }
 
       if (saved.status === "paused") {
-        const secs =
-          saved.secondsLeft > 0
-            ? saved.secondsLeft
-            : durationFor(saved.mode, settings);
+        if (saved.secondsLeft <= 0) {
+          const total =
+            saved.sessionTotalSeconds ?? durationFor(saved.mode, settings);
+          modeRef.current = saved.mode;
+          secondsLeftRef.current = 0;
+          sessionTotalRef.current = total;
+          statusRef.current = "paused";
+          endsAtRef.current = null;
+          setMode(saved.mode);
+          setSecondsLeft(0);
+          setSessionTotalSeconds(total);
+          setStatus("paused");
+          void onSessionComplete();
+          return;
+        }
+        const secs = saved.secondsLeft;
+        const total = saved.sessionTotalSeconds ?? secs;
         modeRef.current = saved.mode;
         secondsLeftRef.current = secs;
+        sessionTotalRef.current = total;
         statusRef.current = "paused";
         endsAtRef.current = null;
         if (secs <= 10) preEndCueFiredRef.current = true;
         setMode(saved.mode);
         setSecondsLeft(secs);
+        setSessionTotalSeconds(total);
         setStatus("paused");
         writeTimer({
           mode: saved.mode,
           status: "paused",
           secondsLeft: secs,
           endsAt: null,
+          sessionTotalSeconds: total,
         });
         return;
       }
@@ -703,24 +863,43 @@ export function useHabitStore() {
       const idleSecs = durationFor(saved.mode, settings);
       modeRef.current = saved.mode;
       secondsLeftRef.current = idleSecs;
+      sessionTotalRef.current = null;
       statusRef.current = "idle";
       endsAtRef.current = null;
       setMode(saved.mode);
       setSecondsLeft(idleSecs);
+      setSessionTotalSeconds(null);
       setStatus("idle");
       writeTimer({
         mode: saved.mode,
         status: "idle",
         secondsLeft: idleSecs,
         endsAt: null,
+        sessionTotalSeconds: null,
       });
     },
-    [clearTick, clearToastTimer, durationFor, startTick, writeTimer]
+    [
+      clearTick,
+      clearToastTimer,
+      durationFor,
+      onSessionComplete,
+      startTick,
+      writeTimer,
+    ]
   );
 
   const exportDataJson = useCallback(() => {
     return exportStateToJson(getSnapshot());
   }, []);
+
+  const getPersistedState = useCallback(() => getSnapshot(), []);
+
+  const applyPersistedState = useCallback(
+    (next: PersistedState) => {
+      applyReplacedState(next);
+    },
+    [applyReplacedState]
+  );
 
   const importDataJson = useCallback(
     (json: string) => {
@@ -740,16 +919,19 @@ export function useHabitStore() {
       const secs = durationFor(m, settings ?? stateRef.current.settings);
       modeRef.current = m;
       secondsLeftRef.current = secs;
+      sessionTotalRef.current = null;
       statusRef.current = "idle";
       preEndCueFiredRef.current = false;
       setMode(m);
       setSecondsLeft(secs);
+      setSessionTotalSeconds(null);
       setStatus("idle");
       writeTimer({
         mode: m,
         status: "idle",
         secondsLeft: secs,
         endsAt: null,
+        sessionTotalSeconds: null,
       });
     },
     [clearTick, durationFor, writeTimer]
@@ -764,16 +946,24 @@ export function useHabitStore() {
     setSessionToast(null);
   }, [clearToastTimer]);
 
+  const effectiveToast: SessionToast =
+    sessionToast ??
+    (saveError ? { kind: "saveError", message: saveError } : null);
+
   const today = getTodayLocalDateString(state.settings);
   const todayStats = state.dailyStats[today] ?? emptyDaily(today);
   const displayStreak = useMemo(
-    () => resolveDisplayStreak(state.streak, today),
-    [state.streak, today]
+    () =>
+      resolveDisplayStreak(state.streak, today, state.settings.kindness),
+    [state.streak, today, state.settings.kindness]
   );
   const activeTodo =
     state.todos.find((t) => t.id === state.activeTodoId) ?? null;
 
-  const totalForMode = configuredSeconds;
+  const totalForMode =
+    status === "idle"
+      ? configuredSeconds
+      : (sessionTotalSeconds ?? configuredSeconds);
   const progress =
     totalForMode > 0 ? 1 - displaySeconds / totalForMode : 0;
 
@@ -794,12 +984,16 @@ export function useHabitStore() {
     settings: state.settings,
     settingsOpen,
     setSettingsOpen,
+    historyOpen,
+    setHistoryOpen,
     streak: displayStreak,
     focusTowardLongBreak: state.focusTowardLongBreak,
     todayStats,
+    dailyStats: state.dailyStats,
+    focusSessions: state.focusSessions,
     focusCredited,
     dismissFocusCredited,
-    sessionToast,
+    sessionToast: effectiveToast,
     dismissSessionToast,
     focusInProgress,
     start,
@@ -814,7 +1008,15 @@ export function useHabitStore() {
     selectTodo,
     updateSettings,
     seedTesting,
+    markOffDay,
+    unmarkOffDay,
+    applyFreezeForDate,
+    repairStreakForDate,
+    freezeYesterday,
+    repairYesterday,
     exportDataJson,
+    getPersistedState,
+    applyPersistedState,
     importDataJson,
     clearAllData,
     resetClockToMode,

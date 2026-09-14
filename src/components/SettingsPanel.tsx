@@ -7,11 +7,15 @@ import {
   toLocalDateString,
 } from "@/lib/dates";
 import {
+  ACCENT_THEMES,
   FOCUS_DURATION_PRESETS,
+  type AccentTheme,
   type AppSettings,
+  type PersistedState,
   type StreakState,
 } from "@/lib/types";
 import { useDialogA11y } from "@/hooks/useDialogA11y";
+import { AccountPanel } from "./AccountPanel";
 
 interface SettingsPanelProps {
   open: boolean;
@@ -29,7 +33,20 @@ interface SettingsPanelProps {
   onExportData: () => string;
   onImportData: (json: string) => void;
   onClearAllData: () => void;
+  onFreezeYesterday?: () => void;
+  onRepairYesterday?: () => void;
+  onInstallPwa?: (() => Promise<void>) | null;
+  getPersistedState?: () => PersistedState;
+  applyPersistedState?: (state: PersistedState) => void;
 }
+
+const ACCENT_LABELS: Record<AccentTheme, string> = {
+  rose: "Rose",
+  emerald: "Emerald",
+  sky: "Sky",
+  amber: "Amber",
+  violet: "Violet",
+};
 
 export function SettingsPanel({
   open,
@@ -42,6 +59,11 @@ export function SettingsPanel({
   onExportData,
   onImportData,
   onClearAllData,
+  onFreezeYesterday,
+  onRepairYesterday,
+  onInstallPwa,
+  getPersistedState,
+  applyPersistedState,
 }: SettingsPanelProps) {
   const effectiveToday = getTodayLocalDateString(settings);
   const [seedLastDate, setSeedLastDate] = useState(
@@ -212,6 +234,130 @@ export function SettingsPanel({
 
         <fieldset className="mb-5 space-y-3">
           <legend className="mb-2 text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+            Appearance
+          </legend>
+          <div>
+            <p className="mb-2 text-xs text-zinc-500 dark:text-zinc-400">
+              Accent color
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {ACCENT_THEMES.map((accent) => {
+                const active = settings.appearance.accent === accent;
+                return (
+                  <button
+                    key={accent}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() =>
+                      onUpdateSettings({
+                        appearance: { ...settings.appearance, accent },
+                      })
+                    }
+                    className={`rounded-full px-3 py-1.5 text-xs font-semibold capitalize transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 accent-ring ${
+                      active
+                        ? "accent-bg text-white"
+                        : "border border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+                    }`}
+                  >
+                    {ACCENT_LABELS[accent]}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div>
+            <p className="mb-2 text-xs text-zinc-500 dark:text-zinc-400">
+              Density
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {(
+                [
+                  ["comfortable", "Comfortable"],
+                  ["compact", "Compact"],
+                ] as const
+              ).map(([value, label]) => {
+                const active = settings.appearance.density === value;
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() =>
+                      onUpdateSettings({
+                        appearance: { ...settings.appearance, density: value },
+                      })
+                    }
+                    className={`rounded-full px-3 py-1.5 text-xs font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 accent-ring ${
+                      active
+                        ? "accent-bg text-white"
+                        : "border border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset className="mb-5 space-y-3">
+          <legend className="mb-2 text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+            Streak kindness
+          </legend>
+          <Toggle
+            id="kindness"
+            label="Enable freezes, off-days, and repair"
+            checked={settings.kindness.enabled}
+            onChange={(checked) =>
+              onUpdateSettings({
+                kindness: { ...settings.kindness, enabled: checked },
+              })
+            }
+          />
+          {settings.kindness.enabled && (
+            <>
+              <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+                Earn 1 freeze every {settings.kindness.freezeEveryNDays}{" "}
+                qualifying days. Tokens: {streak.freezeTokens}. Repairs left:{" "}
+                {streak.repairsRemaining}.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {onFreezeYesterday && (
+                  <button
+                    type="button"
+                    disabled={streak.freezeTokens < 1}
+                    onClick={onFreezeYesterday}
+                    className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 disabled:opacity-40 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+                  >
+                    Freeze yesterday
+                  </button>
+                )}
+                {onRepairYesterday && (
+                  <button
+                    type="button"
+                    disabled={streak.repairsRemaining < 1}
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          "Repair yesterday as a qualifying day? This uses your repair."
+                        )
+                      ) {
+                        onRepairYesterday();
+                      }
+                    }}
+                    className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-40 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100"
+                  >
+                    Repair yesterday
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+        </fieldset>
+
+        <fieldset className="mb-5 space-y-3">
+          <legend className="mb-2 text-sm font-semibold text-zinc-800 dark:text-zinc-200">
             Alerts
           </legend>
           <Toggle
@@ -245,13 +391,41 @@ export function SettingsPanel({
           />
         </fieldset>
 
+        {getPersistedState && applyPersistedState && (
+          <AccountPanel
+            getLocalState={getPersistedState}
+            applyRemoteState={applyPersistedState}
+            exportLocalJson={onExportData}
+          />
+        )}
+
+        {onInstallPwa && (
+          <fieldset className="mb-5 space-y-3">
+            <legend className="mb-2 text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+              Install app
+            </legend>
+            <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+              Install Habit Tracker on this device for a full-screen, offline-ready
+              experience.
+            </p>
+            <button
+              type="button"
+              onClick={() => void onInstallPwa()}
+              className="rounded-lg accent-bg px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+            >
+              Install
+            </button>
+          </fieldset>
+        )}
+
         <fieldset className="mb-5 space-y-3">
           <legend className="mb-2 text-sm font-semibold text-zinc-800 dark:text-zinc-200">
             Data
           </legend>
           <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
             Everything stays on this device. Export a JSON backup, import one
-            later, or clear all local data.
+            later, or clear all local data. Optional cloud sync is available when
+            Supabase env vars are configured.
           </p>
           <div className="flex flex-wrap gap-2">
             <button
@@ -316,6 +490,12 @@ export function SettingsPanel({
               After 4 completed Focus sessions, the next break is a Long break.
               Skip does not advance that counter.
             </li>
+            {settings.kindness.enabled && (
+              <li>
+                Planned off-days and freeze tokens can bridge a miss without
+                resetting your streak. Repair can restore one missed day.
+              </li>
+            )}
           </ul>
           <p className="mt-2">
             Current: {streak.currentStreak} · Best: {streak.bestStreak}

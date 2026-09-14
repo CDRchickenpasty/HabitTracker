@@ -31,7 +31,14 @@ export function hydrateFromStorage(): void {
   if (hydrated || typeof window === "undefined") return;
   const loaded = loadState();
   const today = getTodayLocalDateString(loaded.settings);
-  memory = { ...loaded, streak: resolveDisplayStreak(loaded.streak, today) };
+  memory = {
+    ...loaded,
+    streak: resolveDisplayStreak(
+      loaded.streak,
+      today,
+      loaded.settings.kindness
+    ),
+  };
   hydrated = true;
   emit();
 }
