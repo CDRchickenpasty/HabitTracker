@@ -1,5 +1,10 @@
 import { getTodayLocalDateString } from "./dates";
-import { loadState, saveState, touchLocalUpdatedAt } from "./storage";
+import {
+  loadState,
+  saveState,
+  seedLocalUpdatedAtIfMissing,
+  touchLocalUpdatedAt,
+} from "./storage";
 import { resolveDisplayStreak } from "./streaks";
 import { DEFAULT_STATE, type PersistedState } from "./types";
 
@@ -39,6 +44,8 @@ export function hydrateFromStorage(): void {
       loaded.settings.kindness
     ),
   };
+  // Seed conflict watermark for upgrades / sessions that never edited after v2
+  seedLocalUpdatedAtIfMissing();
   hydrated = true;
   emit();
 }

@@ -11,10 +11,40 @@ import { getSupabaseConfig, isCloudConfigured } from "./config";
 import {
   createDefaultPersistedState,
   getLocalUpdatedAtMs,
+  LOCAL_UPDATED_AT_KEY,
   mergePersistedState,
+  seedLocalUpdatedAtIfMissing,
   touchLocalUpdatedAt,
 } from "@/lib/storage";
 import type { RemoteAppState } from "./sync";
+
+function withLocalStorageShim(run: () => void) {
+  const store = new Map<string, string>();
+  const g = globalThis as unknown as {
+    window?: Window & typeof globalThis;
+  };
+  const prev = g.window;
+  g.window = {
+    localStorage: {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        store.set(k, v);
+      },
+      removeItem: (k: string) => {
+        store.delete(k);
+      },
+      clear: () => store.clear(),
+      key: () => null,
+      length: 0,
+    },
+  } as unknown as Window & typeof globalThis;
+  try {
+    run();
+  } finally {
+    if (prev === undefined) delete g.window;
+    else g.window = prev;
+  }
+}
 
 function remote(
   partial: Partial<RemoteAppState> & { updated_at: string }
@@ -34,10 +64,10 @@ describe("account decideSyncOnSignIn", () => {
     });
   });
 
-  it("applies remote when local watermark is missing", () => {
+  it("conflicts when local watermark is missing but remote exists", () => {
     const r = remote({ updated_at: "2026-09-14T00:00:00.000Z" });
     expect(decideSyncOnSignIn(r, null)).toEqual({
-      action: "apply-remote",
+      action: "conflict",
       remote: r,
     });
   });
@@ -185,32 +215,25 @@ describe("cloud config gating", () => {
 
 describe("local updated-at watermark", () => {
   it("round-trips through touchLocalUpdatedAt / getLocalUpdatedAtMs", () => {
-    // jsdom may be absent — use a minimal localStorage shim when needed
-    const store = new Map<string, string>();
-    const g = globalThis as unknown as {
-      window?: Window & typeof globalThis;
-      localStorage?: Storage;
-    };
-    const hadWindow = typeof g.window !== "undefined";
-    if (!hadWindow) {
-      g.window = {
-        localStorage: {
-          getItem: (k: string) => store.get(k) ?? null,
-          setItem: (k: string, v: string) => {
-            store.set(k, v);
-          },
-          removeItem: (k: string) => {
-            store.delete(k);
-          },
-          clear: () => store.clear(),
-          key: () => null,
-          length: 0,
-        },
-      } as unknown as Window & typeof globalThis;
-    }
+    withLocalStorageShim(() => {
+      const at = 1_725_000_000_000;
+      touchLocalUpdatedAt(at);
+      expect(getLocalUpdatedAtMs()).toBe(at);
+    });
+  });
 
-    const at = 1_725_000_000_000;
-    touchLocalUpdatedAt(at);
-    expect(getLocalUpdatedAtMs()).toBe(at);
+  it("seedLocalUpdatedAtIfMissing writes once and preserves existing", () => {
+    withLocalStorageShim(() => {
+      expect(getLocalUpdatedAtMs()).toBeNull();
+      const seeded = seedLocalUpdatedAtIfMissing(1_700_000_000_000);
+      expect(seeded).toBe(1_700_000_000_000);
+      expect(getLocalUpdatedAtMs()).toBe(1_700_000_000_000);
+      expect(seedLocalUpdatedAtIfMissing(1_800_000_000_000)).toBe(
+        1_700_000_000_000
+      );
+      expect(window.localStorage.getItem(LOCAL_UPDATED_AT_KEY)).toBe(
+        "1700000000000"
+      );
+    });
   });
 });

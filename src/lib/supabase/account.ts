@@ -9,6 +9,7 @@ export type SyncDecision =
 /**
  * Pure sign-in sync decision.
  * - No remote row → upload local (first device / empty cloud).
+ * - Missing local watermark but remote exists → conflict (never silent overwrite).
  * - Remote newer than local watermark → conflict (UI chooses).
  * - Otherwise upload local (local is same age or newer).
  */
@@ -19,9 +20,9 @@ export function decideSyncOnSignIn(
   if (!remote) {
     return { action: "upload-local" };
   }
+  // Unknown local age + existing cloud row = divergence → user must choose
   if (localUpdatedAtMs == null) {
-    // No local watermark — prefer cloud to avoid wiping existing account data
-    return { action: "apply-remote", remote };
+    return { action: "conflict", remote };
   }
   const remoteMs = Date.parse(remote.updated_at);
   if (!Number.isFinite(remoteMs) || remoteMs > localUpdatedAtMs) {
