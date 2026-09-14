@@ -6,6 +6,7 @@ import {
   formatAccountIdentity,
   isValidEmail,
 } from "@/lib/supabase/account";
+import { resolveEmailRedirectTo } from "@/lib/supabase/authRedirect";
 import { isCloudConfigured } from "@/lib/supabase/config";
 import { getSupabase } from "@/lib/supabase/client";
 import {
@@ -16,7 +17,7 @@ import {
   SyncConfigError,
 } from "@/lib/supabase/sync";
 import type { PersistedState } from "@/lib/types";
-import type { User } from "@supabase/supabase-js";
+import type { EmailOtpType, User } from "@supabase/supabase-js";
 
 interface AccountPanelProps {
   getLocalState: () => PersistedState;
@@ -45,6 +46,7 @@ export function AccountPanel({
   const [statusTone, setStatusTone] = useState<"info" | "error">("info");
   const [busy, setBusy] = useState(false);
   const [linkSent, setLinkSent] = useState(false);
+  const [otpCode, setOtpCode] = useState("");
   const [sessionReady, setSessionReady] = useState(() => !isCloudConfigured());
   const [conflict, setConflict] = useState<{
     remote: PersistedState;
@@ -172,15 +174,14 @@ export function AccountPanel({
       const { error } = await supabase.auth.signInWithOtp({
         email: trimmed,
         options: {
-          emailRedirectTo:
-            typeof window !== "undefined" ? window.location.origin : undefined,
+          emailRedirectTo: resolveEmailRedirectTo(),
           shouldCreateUser: true,
         },
       });
       if (error) throw error;
       setLinkSent(true);
       setInfo(
-        `Magic link sent to ${trimmed}. Open it on this device to finish signing in.`
+        `Email sent to ${trimmed}. Check Inbox and Spam/Promotions for noreply@mail.app.supabase.io — then click the link, or paste the 6-digit code below.`
       );
     } catch (e) {
       setLinkSent(false);
@@ -189,6 +190,50 @@ export function AccountPanel({
       setBusy(false);
     }
   }, [email, setError, setInfo]);
+
+  const verifyOtpCode = useCallback(async () => {
+    const supabase = getSupabase();
+    if (!supabase) {
+      setError("Cloud sync is not configured on this build.");
+      return;
+    }
+    const trimmedEmail = email.trim();
+    const token = otpCode.replace(/\s/g, "");
+    if (!isValidEmail(trimmedEmail)) {
+      setError("Enter the same email you used for the link.");
+      return;
+    }
+    if (!/^\d{6}$/.test(token)) {
+      setError("Enter the 6-digit code from the email.");
+      return;
+    }
+    setBusy(true);
+    setStatus(null);
+    try {
+      const types: EmailOtpType[] = ["email", "magiclink", "signup"];
+      let lastError: Error | null = null;
+      for (const type of types) {
+        const { data, error } = await supabase.auth.verifyOtp({
+          email: trimmedEmail,
+          token,
+          type,
+        });
+        if (!error && data.session?.user) {
+          setUser(data.session.user);
+          setLinkSent(false);
+          setOtpCode("");
+          setInfo("Signed in with email code.");
+          return;
+        }
+        if (error) lastError = error;
+      }
+      throw lastError ?? new Error("Invalid or expired code.");
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [email, otpCode, setError, setInfo]);
 
   const signOut = useCallback(async () => {
     const supabase = getSupabase();
@@ -320,14 +365,47 @@ export function AccountPanel({
               onClick={() => void sendMagicLink()}
               className="rounded-lg accent-bg px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
             >
-              {busy ? "Sending…" : linkSent ? "Resend magic link" : "Send magic link"}
+              {busy ? "Sending…" : linkSent ? "Resend email" : "Send sign-in email"}
             </button>
           </div>
           {linkSent && (
-            <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              Waiting for you to open the link. Keep this tab open, or return here
-              after signing in.
-            </p>
+            <div className="space-y-2 rounded-xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-700 dark:bg-zinc-800/50">
+              <p className="text-xs leading-relaxed text-zinc-600 dark:text-zinc-300">
+                Supabase sent the message from{" "}
+                <strong>noreply@mail.app.supabase.io</strong>. It often lands in{" "}
+                <strong>Spam</strong> or <strong>Promotions</strong>. Prefer the
+                6-digit code if the link says expired.
+              </p>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <label htmlFor="otp-code" className="sr-only">
+                  6-digit code
+                </label>
+                <input
+                  id="otp-code"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  placeholder="6-digit code"
+                  value={otpCode}
+                  disabled={busy}
+                  onChange={(e) => setOtpCode(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void verifyOtpCode();
+                    }
+                  }}
+                  className="min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm tabular-nums dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+                />
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void verifyOtpCode()}
+                  className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+                >
+                  Verify code
+                </button>
+              </div>
+            </div>
           )}
         </div>
       ) : (

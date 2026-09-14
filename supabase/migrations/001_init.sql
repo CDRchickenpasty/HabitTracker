@@ -58,6 +58,13 @@ begin
   insert into public.profiles (user_id, display_name)
   values (new.id, coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1)))
   on conflict (user_id) do nothing;
+
+  -- Auto-confirm so mailer can send magic-link style OTPs (default Supabase
+  -- confirmation links are often prefetched/spam-filtered).
+  update auth.users
+  set email_confirmed_at = coalesce(email_confirmed_at, now())
+  where id = new.id;
+
   return new;
 end;
 $$;
