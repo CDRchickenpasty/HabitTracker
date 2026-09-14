@@ -74,3 +74,9 @@ export function replacePersistedState(next: PersistedState): void {
   }
   emit();
 }
+
+/** Test-only: clear hydrate latch so hydrateFromStorage can run again. */
+export function resetStoreForTests(): void {
+  memory = DEFAULT_STATE;
+  hydrated = false;
+}

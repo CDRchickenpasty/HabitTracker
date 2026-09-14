@@ -11,9 +11,16 @@ import { getSupabaseConfig, isCloudConfigured } from "./config";
 import {
   createDefaultPersistedState,
   getLocalUpdatedAtMs,
+  LOCAL_UPDATED_AT_KEY,
   mergePersistedState,
   touchLocalUpdatedAt,
 } from "@/lib/storage";
+import {
+  hydrateFromStorage,
+  isStoreHydrated,
+  resetStoreForTests,
+} from "@/lib/store";
+import { STORAGE_KEY } from "@/lib/types";
 import type { RemoteAppState } from "./sync";
 
 function withLocalStorageShim(run: () => void) {
@@ -42,14 +49,6 @@ function withLocalStorageShim(run: () => void) {
     if (prev === undefined) delete g.window;
     else g.window = prev;
   }
-}
-
-/**
- * Mirrors post-hydrate empty/default device: no watermark was written
- * (hydrate intentionally does not seed Date.now()).
- */
-function watermarkAfterEmptyHydrate(): number | null {
-  return getLocalUpdatedAtMs();
 }
 
 function remote(
@@ -229,12 +228,18 @@ describe("local updated-at watermark", () => {
   });
 });
 
-describe("hydrate-then-decideSyncOnSignIn (new/empty device vs cloud)", () => {
-  it("keeps null watermark after empty hydrate and conflicts with existing remote", () => {
+describe("hydrate-then-decideSyncOnSignIn (real hydrateFromStorage)", () => {
+  it("empty storage: hydrate leaves null watermark → conflict with remote", () => {
     withLocalStorageShim(() => {
-      // Empty device: hydrate must NOT stamp Date.now()
-      const afterHydrate = watermarkAfterEmptyHydrate();
+      resetStoreForTests();
+      expect(isStoreHydrated()).toBe(false);
+
+      hydrateFromStorage();
+
+      expect(isStoreHydrated()).toBe(true);
+      const afterHydrate = getLocalUpdatedAtMs();
       expect(afterHydrate).toBeNull();
+      expect(window.localStorage.getItem(LOCAL_UPDATED_AT_KEY)).toBeNull();
 
       const cloud = remote({
         updated_at: "2026-01-01T00:00:00.000Z",
@@ -258,16 +263,58 @@ describe("hydrate-then-decideSyncOnSignIn (new/empty device vs cloud)", () => {
     });
   });
 
-  it("regression: stamping Date.now() on empty local would wipe older cloud via upload-local", () => {
+  it("local blob without watermark: hydrate still leaves null → conflict", () => {
+    withLocalStorageShim(() => {
+      const localBlob = mergePersistedState({
+        todos: [
+          {
+            id: "local-todo",
+            text: "Guest work",
+            completed: false,
+            createdAt: 2,
+          },
+        ],
+      });
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(localBlob));
+      // Intentionally no LOCAL_UPDATED_AT_KEY
+      expect(window.localStorage.getItem(LOCAL_UPDATED_AT_KEY)).toBeNull();
+
+      resetStoreForTests();
+      hydrateFromStorage();
+
+      const afterHydrate = getLocalUpdatedAtMs();
+      expect(afterHydrate).toBeNull();
+
+      const cloud = remote({
+        updated_at: "2026-01-01T00:00:00.000Z",
+        state: mergePersistedState({
+          todos: [
+            {
+              id: "cloud-only",
+              text: "Cloud work",
+              completed: false,
+              createdAt: 1,
+            },
+          ],
+        }),
+      });
+      expect(decideSyncOnSignIn(cloud, afterHydrate).action).toBe("conflict");
+    });
+  });
+
+  it("regression: stamping Date.now() would wipe older cloud via upload-local", () => {
     withLocalStorageShim(() => {
       const cloud = remote({ updated_at: "2026-01-01T00:00:00.000Z" });
-      // Anti-pattern we removed from hydrate — proves why null→conflict is required
       const wronglySeededNow = Date.parse("2026-09-14T12:00:00.000Z");
       expect(decideSyncOnSignIn(cloud, wronglySeededNow).action).toBe(
         "upload-local"
       );
-      // Correct post-hydrate path must not take that branch
-      expect(decideSyncOnSignIn(cloud, null).action).toBe("conflict");
+
+      resetStoreForTests();
+      hydrateFromStorage();
+      expect(decideSyncOnSignIn(cloud, getLocalUpdatedAtMs()).action).toBe(
+        "conflict"
+      );
     });
   });
 });
