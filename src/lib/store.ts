@@ -1,10 +1,5 @@
 import { getTodayLocalDateString } from "./dates";
-import {
-  loadState,
-  saveState,
-  seedLocalUpdatedAtIfMissing,
-  touchLocalUpdatedAt,
-} from "./storage";
+import { loadState, saveState, touchLocalUpdatedAt } from "./storage";
 import { resolveDisplayStreak } from "./streaks";
 import { DEFAULT_STATE, type PersistedState } from "./types";
 
@@ -44,8 +39,10 @@ export function hydrateFromStorage(): void {
       loaded.settings.kindness
     ),
   };
-  // Seed conflict watermark for upgrades / sessions that never edited after v2
-  seedLocalUpdatedAtIfMissing();
+  // Do NOT seed local-updated-at here. Empty/default devices must keep a null
+  // watermark so decideSyncOnSignIn(remote, null) → conflict (never silent
+  // upload-local that wipes older cloud data). Watermark is set only on real
+  // local writes via touchLocalUpdatedAt in set/replacePersistedState.
   hydrated = true;
   emit();
 }

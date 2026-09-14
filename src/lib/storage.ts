@@ -48,15 +48,6 @@ export function touchLocalUpdatedAt(atMs: number = Date.now()): void {
   }
 }
 
-/** Idempotent seed used on hydrate so upgrades aren't treated as "no local age". */
-export function seedLocalUpdatedAtIfMissing(
-  atMs: number = Date.now()
-): number {
-  const existing = getLocalUpdatedAtMs();
-  if (existing != null) return existing;
-  touchLocalUpdatedAt(atMs);
-  return atMs;
-}
 
 /** Fresh default persisted snapshot (deep-enough clone; safe to mutate). */
 export function createDefaultPersistedState(): PersistedState {
